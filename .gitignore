@@ -1,0 +1,30 @@
+# Secrets — every API key in this app lives here. Never committed.
+.env
+.env.*
+!.env.example
+
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Node
+node_modules/
+dist/
+
+# Model weights — 338 MB CLIP + 25 MB YOLO, downloaded on first run.
+backend/weights/
+*.pt
+
+# Spike output: saved pages, screenshots and probe payloads from live runs.
+# Kept locally as evidence, too bulky and too transient to version.
+backend/spikes/*.html
+backend/spikes/*.png
+backend/spikes/*.jpg
+backend/spikes/*.json
+backend/spikes/out/
+demo/*.webm
+
+# macOS
+.DS_Store

@@ -1,0 +1,223 @@
+/* Market snapshot — compact analytics strip above search results. */
+
+.market-snapshot {
+  --ms-green: #15803d;
+  --ms-green-bg: #15803d14;
+  --ms-amber: #b45309;
+  --ms-amber-bg: #b4530914;
+  --ms-red: #b3261e;
+  --ms-red-bg: #b3261e14;
+
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 16px 20px;
+  margin-bottom: 24px;
+}
+
+@media (prefers-color-scheme: dark) {
+  .market-snapshot {
+    --ms-green: #4ade80;
+    --ms-green-bg: #4ade8021;
+    --ms-amber: #fbbf24;
+    --ms-amber-bg: #fbbf2421;
+    --ms-red: #f87171;
+    --ms-red-bg: #f8717121;
+  }
+}
+
+.ms-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.ms-title {
+  margin: 0;
+  font-size: 0.95rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.ms-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--ink-soft);
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+}
+
+.ms-toggle:hover {
+  color: var(--ink);
+  border-color: var(--ink-soft);
+}
+
+.ms-chevron {
+  transition: transform 0.15s;
+}
+
+.ms-chevron-closed {
+  transform: rotate(-90deg);
+}
+
+.ms-body {
+  margin-top: 14px;
+}
+
+/* ---------- KPI tiles ---------- */
+
+.ms-tiles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.ms-tile {
+  flex: 1 1 auto;
+  min-width: 108px;
+  padding: 10px 14px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.ms-tile-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink-soft);
+  margin-bottom: 4px;
+  white-space: nowrap;
+}
+
+.ms-tile-value {
+  font-size: 15px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.ms-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: default;
+}
+
+.ms-chip-low {
+  background: var(--ms-green-bg);
+  color: var(--ms-green);
+}
+
+.ms-chip-medium {
+  background: var(--ms-amber-bg);
+  color: var(--ms-amber);
+}
+
+.ms-chip-high {
+  background: var(--ms-red-bg);
+  color: var(--ms-red);
+}
+
+/* ---------- Histogram + site mix ---------- */
+
+.ms-detail {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px 24px;
+  margin-top: 14px;
+}
+
+.ms-block-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink-soft);
+  margin-bottom: 8px;
+}
+
+.ms-hist-bars {
+  display: flex;
+  align-items: flex-end;
+  gap: 4px;
+  height: 56px;
+}
+
+.ms-hist-bar {
+  flex: 1;
+  min-height: 3px;
+  background: var(--accent);
+  opacity: 0.55;
+  border-radius: 3px 3px 0 0;
+  transition: opacity 0.15s;
+}
+
+.ms-hist-bar:hover {
+  opacity: 0.9;
+}
+
+.ms-hist-bar-empty {
+  min-height: 0;
+  height: 0;
+}
+
+.ms-hist-axis {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--ink-soft);
+}
+
+.ms-sitemix-bar {
+  display: flex;
+  height: 10px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: var(--bg);
+}
+
+.ms-sitemix-segment {
+  min-width: 2px;
+}
+
+.ms-sitemix-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  margin-top: 8px;
+}
+
+.ms-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--ink-soft);
+}
+
+.ms-legend-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: none;
+}
+
+.ms-legend-count {
+  font-weight: 600;
+  color: var(--ink);
+}
+
+@media (max-width: 780px) {
+  .ms-detail {
+    grid-template-columns: 1fr;
+  }
+}

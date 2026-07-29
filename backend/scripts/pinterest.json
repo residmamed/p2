@@ -1,0 +1,72 @@
+[
+  {
+    "id": "pinterest-1",
+    "site": "pinterest",
+    "product_url": "https://www.pinterest.com/pin/630785491606384669/",
+    "title": "Pinterest inspiration",
+    "image_url": "/product-images/pinterest-1.jpg"
+  },
+  {
+    "id": "pinterest-2",
+    "site": "pinterest",
+    "product_url": "https://www.pinterest.com/pin/4593530960629221760/",
+    "title": "Pinterest inspiration",
+    "image_url": "/product-images/pinterest-2.jpg"
+  },
+  {
+    "id": "pinterest-3",
+    "site": "pinterest",
+    "product_url": "https://www.pinterest.com/pin/630785491606382439/",
+    "title": "Pinterest inspiration",
+    "image_url": "/product-images/pinterest-3.jpg"
+  },
+  {
+    "id": "pinterest-4",
+    "site": "pinterest",
+    "product_url": "https://www.pinterest.com/pin/4609504714019863424/",
+    "title": "Pinterest inspiration",
+    "image_url": "/product-images/pinterest-4.jpg"
+  },
+  {
+    "id": "pinterest-5",
+    "site": "pinterest",
+    "product_url": "https://www.pinterest.com/pin/149955862598987830/",
+    "title": "Pinterest inspiration",
+    "image_url": "/product-images/pinterest-5.jpg"
+  },
+  {
+    "id": "pinterest-6",
+    "site": "pinterest",
+    "product_url": "https://www.pinterest.com/pin/499899627416567710/",
+    "title": "Pinterest inspiration",
+    "image_url": "/product-images/pinterest-6.jpg"
+  },
+  {
+    "id": "pinterest-7",
+    "site": "pinterest",
+    "product_url": "https://www.pinterest.com/pin/4594516166802119040/",
+    "title": "Pinterest inspiration",
+    "image_url": "/product-images/pinterest-7.jpg"
+  },
+  {
+    "id": "pinterest-8",
+    "site": "pinterest",
+    "product_url": "https://www.pinterest.com/pin/4594305029182452096/",
+    "title": "Pinterest inspiration",
+    "image_url": "/product-images/pinterest-8.jpg"
+  },
+  {
+    "id": "pinterest-9",
+    "site": "pinterest",
+    "product_url": "https://www.pinterest.com/pin/1126885138047477475/",
+    "title": "Pinterest inspiration",
+    "image_url": "/product-images/pinterest-9.jpg"
+  },
+  {
+    "id": "pinterest-10",
+    "site": "pinterest",
+    "product_url": "https://www.pinterest.com/pin/4610278768070096128/",
+    "title": "Pinterest inspiration",
+    "image_url": "/product-images/pinterest-10.jpg"
+  }
+]

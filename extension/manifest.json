@@ -1,0 +1,21 @@
+{
+  "manifest_version": 3,
+  "name": "Zyte Lens Bridge",
+  "version": "1.0.0",
+  "description": "Runs a Google Lens reverse-image search in a real browser tab on behalf of the Zyte sourcing app, and returns results to it.",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA8wFUo7uO6a1fZlWx1leg4wYbwyeHQhDw3BYWqpTSQ7nyQtug6VeIh7CgyyqaLlh2Gli3sVEjFqf0ph2bXJIRyAoStwHeiTLQbB0P1dYDLtlxoNVAlQwte9SCQw+KsQMFWx1nF+Y2g+7oKk+7CmC5h1S/sf7X2n8dd4VNZV8rTuB0a11J26PxXjtitFVINsRF4LQFMtsIPFwBxpleOPE9jRJ2RG3xWprLASR3lmNCG6lZD4XypcWFRD2wxEizhEPuHYpdd4tfOCqiEFvprLA/BaXAt3O3RHu5GBX4kNHKe2KSb7+mf1apSu4vOfHXIUqimUHlgNz5n49iFTWUzW3AbwIDAQAB",
+  "permissions": ["scripting", "tabs"],
+  "host_permissions": [
+    "https://www.google.com/*",
+    "https://lens.google.com/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "externally_connectable": {
+    "matches": [
+      "http://localhost:5173/*",
+      "http://127.0.0.1:5173/*"
+    ]
+  }
+}

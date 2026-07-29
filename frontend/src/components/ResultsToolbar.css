@@ -1,0 +1,123 @@
+/* ResultsToolbar — compact refine/sort strip above the results grid. */
+
+.results-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  margin-bottom: 20px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}
+
+/* Compact take on .text-input, sized for a one-row toolbar. */
+.rt-input {
+  height: 34px;
+  padding: 0 10px;
+  font-size: 13px;
+  font-family: inherit;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  outline: none;
+  transition: border-color 0.15s;
+}
+
+.rt-input:focus {
+  border-color: #b0b0b6;
+}
+
+.rt-input::placeholder {
+  color: var(--ink-soft);
+}
+
+.rt-search {
+  width: 200px;
+}
+
+.rt-select {
+  cursor: pointer;
+}
+
+.rt-price-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.rt-currency {
+  position: absolute;
+  left: 10px;
+  font-size: 12px;
+  color: var(--ink-soft);
+  pointer-events: none;
+}
+
+.rt-price {
+  width: 90px;
+  padding-left: 22px;
+}
+
+.rt-reviews {
+  width: 110px;
+}
+
+.rt-rating-group {
+  display: flex;
+  gap: 4px;
+}
+
+.rt-pill {
+  height: 34px;
+  padding: 0 11px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+
+.rt-pill:hover:not(.active) {
+  border-color: #c7c7cc;
+}
+
+.rt-pill.active {
+  background: var(--pill-active-bg);
+  color: var(--pill-active-fg);
+  border-color: var(--pill-active-bg);
+}
+
+.rt-count {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--ink-soft);
+  white-space: nowrap;
+}
+
+.rt-count strong {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.rt-clear {
+  border: none;
+  background: none;
+  padding: 4px 6px;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink-soft);
+  cursor: pointer;
+  transition: color 0.15s;
+}
+
+.rt-clear:hover {
+  color: var(--ink);
+}

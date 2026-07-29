@@ -1,0 +1,98 @@
+/* Saved/recent search chips — compact rows under the search form. */
+
+.ss-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+  max-width: 760px;
+}
+
+.ss-row-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink-soft);
+  margin-right: 2px;
+}
+
+.ss-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  font-size: 12px;
+  color: var(--ink);
+  transition: border-color 0.15s ease;
+}
+
+.ss-chip:hover {
+  border-color: var(--accent);
+}
+
+.ss-chip-button {
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.ss-chip-main {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: 12px;
+  font-family: inherit;
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.ss-chip-star {
+  color: var(--ink-soft);
+  font-size: 11px;
+}
+
+.ss-chip-remove {
+  background: none;
+  border: none;
+  padding: 0 2px;
+  font-size: 11px;
+  line-height: 1;
+  color: var(--ink-soft);
+  cursor: pointer;
+  transition: color 0.15s ease;
+}
+
+.ss-chip-remove:hover {
+  color: var(--danger-fg);
+}
+
+.ss-ghost {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 10px;
+  border: 1px dashed var(--border);
+  border-radius: 999px;
+  background: transparent;
+  font-size: 12px;
+  font-weight: 600;
+  font-family: inherit;
+  color: var(--ink-soft);
+  cursor: pointer;
+  transition: color 0.15s ease, border-color 0.15s ease;
+}
+
+.ss-ghost:hover {
+  color: var(--ink);
+  border-color: var(--accent);
+}
+
+.ss-ghost-saved {
+  border-style: solid;
+  color: var(--ink);
+}

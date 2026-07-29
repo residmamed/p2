@@ -1,0 +1,442 @@
+[
+  {
+    "id": "amazon-1",
+    "site": "amazon",
+    "product_url": "https://www.amazon.com/HydroJug-Traveler-Resistant-Bottle-Reusable-Insulated/dp/B0CQVWW5QK/",
+    "title": "HydroJug Traveler 40oz, Insulated Tumbler with Handle & Straw, Cream",
+    "price_text": "$33.99",
+    "rating": 4.6,
+    "review_count": 19462,
+    "image_url": "/product-images/amazon-1.jpg"
+  },
+  {
+    "id": "amazon-2",
+    "site": "amazon",
+    "product_url": "https://www.amazon.com/STANLEY-Flowstate-3-Position-Compatible-Insulated/dp/B0CRMP3RQT/",
+    "title": "STANLEY Quencher H2.0 Tumbler with Handle and Straw 40 oz | Flowstate 3-Position Lid | Cup Holder Compatible for Travel | Insulated Stainless Steel Cup | BPA-Free | Peony",
+    "price_text": "$34.42",
+    "rating": 4.7,
+    "review_count": 202694,
+    "image_url": "/product-images/amazon-2.jpg"
+  },
+  {
+    "id": "amazon-3",
+    "site": "amazon",
+    "product_url": "https://www.amazon.com/Zak-Designs-Toddler-Tumblers-Leak-Proof/dp/B0DVT3XL2L/",
+    "title": "Zak Designs Sesame Street Kelso Toddler Tumblers For Travel or At Home, 15oz 2-Pack Durable Plastic Sippy Cups With Leak-Proof Design is Perfect For Kids (Elmo and Cookie Monster)",
+    "price_text": "$13.99",
+    "rating": 4.6,
+    "review_count": 31722,
+    "image_url": "/product-images/amazon-3.jpg"
+  },
+  {
+    "id": "amazon-4",
+    "site": "amazon",
+    "product_url": "https://www.amazon.com/SUNWILL-Tumbler-Stainless-Insulated-Durable/dp/B07MV6Z896/",
+    "title": "SUNWILL Travel Coffee Tumbler 20 oz, Insulated Mug with Lid, Stainless Steel Cup for Outdoor, Powder Coated Navy",
+    "price_text": "$9.99",
+    "rating": 4.5,
+    "review_count": 28214,
+    "image_url": "/product-images/amazon-4.jpg"
+  },
+  {
+    "id": "amazon-5",
+    "site": "amazon",
+    "product_url": "https://www.amazon.com/Libbey-Ascent-16-Piece-Glass-Set/dp/B0767QGBVD/",
+    "title": "Libbey Ascent Tumbler & Rocks Drinking Glasses Set of 16, Clear Glass Cups | 16.25 oz & 12.25 oz Capacities Glasses for Water, Juice, Cocktails, and More with Curved Design and Dishwasher-Safe Care",
+    "price_text": "$39.0",
+    "rating": 4.6,
+    "review_count": 46012,
+    "image_url": "/product-images/amazon-5.jpg"
+  },
+  {
+    "id": "amazon-6",
+    "site": "amazon",
+    "product_url": "https://www.amazon.com/Owala-SmoothSip-Insulated-Stainless-Reusable/dp/B0DF4LJGV5/",
+    "title": "Owala SmoothSip Slider Insulated Stainless Steel Coffee Tumbler, Reusable Iced Coffee Cup, Hot Coffee Travel Mug, BPA Free 12 oz, Grey/Blue (High Dive)",
+    "price_text": "$19.99",
+    "rating": 4.6,
+    "review_count": 13727,
+    "image_url": "/product-images/amazon-6.jpg"
+  },
+  {
+    "id": "amazon-7",
+    "site": "amazon",
+    "product_url": "https://www.amazon.com/Owala-Insulation-Stainless-Resistant-Dishwasher/dp/B0CR5HLCVQ/",
+    "title": "Owala Tumbler Kids Stainless Steel Water Bottle 12 oz Turtley Awesome | Insulated | Spill-Resistant Lid | Reusable Straw | Double-Wall Vacuum Insulation | Cup-Holder Friendly",
+    "price_text": "$19.88",
+    "rating": 4.5,
+    "review_count": 8113,
+    "image_url": "/product-images/amazon-7.jpg"
+  },
+  {
+    "id": "amazon-8",
+    "site": "amazon",
+    "product_url": "https://www.amazon.com/YETI-Rambler-Vacuum-Insulated-Stainless/dp/B0D6X3FH6G/",
+    "title": "YETI Rambler 20 oz Stainless Steel Vacuum Insulated Tumbler w/MagSlider Lid",
+    "price_text": "$28.49",
+    "rating": 4.8,
+    "review_count": 147080,
+    "image_url": "/product-images/amazon-8.jpg"
+  },
+  {
+    "id": "amazon-9",
+    "site": "amazon",
+    "product_url": "https://www.amazon.com/Infantino-1st-Tumbler-Leak-Resistant-Toddler-Friendly/dp/B0DF3L6CQ1/",
+    "title": "Infantino My 1st Tumbler 9 Oz Silicone Sippy Cup, Lilac",
+    "price_text": "$7.79",
+    "rating": 4.5,
+    "review_count": 2851,
+    "image_url": "/product-images/amazon-9.jpg"
+  },
+  {
+    "id": "amazon-10",
+    "site": "amazon",
+    "product_url": "https://www.amazon.com/BLUEPOLAR-Tumbler-Bottle-Sealed-Insulated/dp/B09XDHV2B5/",
+    "title": "BLUEPOLAR 13oz/400ml Tumbler Water Glass, Cups with Straw and Lid Sealed Carry on for Coffee, Iced Tea, Thick Wall Insulated Glass Cup (Amber)…",
+    "price_text": "$9.99",
+    "rating": 4.4,
+    "review_count": 1461,
+    "image_url": "/product-images/amazon-10.jpg"
+  },
+  {
+    "id": "amazon-11",
+    "site": "amazon",
+    "product_url": "https://www.amazon.com/HydroJug-Traveler-Resistant-Bottle-Reusable-Insulated/dp/B0CQVWW5QK/",
+    "title": "Owala FreeSip Tumbler Stainless Steel Water Bottle 40 oz Foggy Tide | Triple-Layer Insulation | Leak-Proof Lid with Push-Button | Double Threaded Lid for Left and Right-Handed Drinking",
+    "price_text": "$34.99",
+    "rating": 4.7,
+    "review_count": 10542,
+    "image_url": "/product-images/amazon-11.jpg"
+  },
+  {
+    "id": "amazon-12",
+    "site": "amazon",
+    "product_url": "https://www.amazon.com/Iced-Coffee-Cups-Lids-2Pcs/dp/B0GX63M4JV/",
+    "title": "Iced Coffee Cups with Lids 2Pcs: Ribbed Glass Tumbler with Straw and Lid 20oz - Vintage Glass Cups with Lids and Straws - Tumbler Leak Proof Aesthetic Drinking for Coffee Bar Accessories",
+    "price_text": "$12.99",
+    "rating": 4.4,
+    "review_count": 67,
+    "image_url": "/product-images/amazon-12.jpg"
+  },
+  {
+    "id": "amazon-13",
+    "site": "amazon",
+    "product_url": "https://www.amazon.com/Simple-Modern-Stainless-Insulated-Adventures/dp/B0FFVVGLQ5/",
+    "title": "Simple Modern Disney Toy Story Kids Water Bottle & Toddler Cup | 14oz | Insulated Stainless Steel Buzz and Woody Toddler Water Bottle, Kids Tumbler with Straw | Spill Proof for School, Girls, Boys",
+    "price_text": "$22.99",
+    "rating": 4.6,
+    "review_count": 8405,
+    "image_url": "/product-images/amazon-13.jpg"
+  },
+  {
+    "id": "amazon-14",
+    "site": "amazon",
+    "product_url": "https://www.amazon.com/WATERSY-Tumbler-Insulated-Stainless-Beverages/dp/B0D76368QD/",
+    "title": "40 oz Tumbler with Handle,Tumbler with Lid and Straw,Double Wall Insulated Cup Stainless Steel Travel Mug(Cold for 34 Hours),Water Bottle for Iced Tea,Coffee,Cold Beverages(Purple)",
+    "price_text": "$12.79",
+    "rating": 4.6,
+    "review_count": 2547,
+    "image_url": "/product-images/amazon-14.jpg"
+  },
+  {
+    "id": "amazon-15",
+    "site": "amazon",
+    "product_url": "https://www.amazon.com/Owala-SmoothSip-Ceramic-Lined-Insulated-Stainless/dp/B0GTN3T9ZC/",
+    "title": "Owala SmoothSip Slider Ceramic-Lined Insulated Stainless Steel Coffee Tumbler, No Metallic Taste Reusable Travel Mug, Hot Iced Coffee Cup, BPA Free 12 oz, Very, Very Dark",
+    "price_text": "$29.99",
+    "rating": 4.8,
+    "review_count": 310,
+    "image_url": "/product-images/amazon-15.jpg"
+  },
+  {
+    "id": "amazon-16",
+    "site": "amazon",
+    "product_url": "https://www.amazon.com/REDUCE-Portable-Tumbler-Spill-Proof-Straws/dp/B0FNR9K6HS/",
+    "title": "REDUCE GoGo's Kids Portable Tumbler Cups with Lids and Spill-Proof Straws - 5 Pack of Stackable 12 oz Tumblers with Twist-On Lids - Easy Storage, Dishwasher Safe - New Explorer",
+    "price_text": "$21.99",
+    "rating": 4.2,
+    "review_count": 4590,
+    "image_url": "/product-images/amazon-16.jpg"
+  },
+  {
+    "id": "amazon-17",
+    "site": "amazon",
+    "product_url": "https://www.amazon.com/Bottle-Insulated-Stainless-School-Travel/dp/B0DY3WJ53M/",
+    "title": "Boys Water Bottle with Straw,18 oz Kids Insulated Cups with Stainless Steel Leak Proof for School,Sport&Travel（Lightning）",
+    "price_text": "$15.99",
+    "rating": 4.7,
+    "review_count": 676,
+    "image_url": "/product-images/amazon-17.jpg"
+  },
+  {
+    "id": "amazon-18",
+    "site": "amazon",
+    "product_url": "https://www.amazon.com/Simple-Modern-Insulated-Stainless-Collection/dp/B0C9FR5FD8/",
+    "title": "Simple Modern Kids Water Bottle & Toddler Cup | 14oz | Confetti | Insulated Stainless Steel Toddler Water Bottle, Kids Tumbler with Straw | Spill Proof for School, Girls, Boys | Confetti",
+    "price_text": "$19.99",
+    "rating": 4.5,
+    "review_count": 12571,
+    "image_url": "/product-images/amazon-18.jpg"
+  },
+  {
+    "id": "amazon-19",
+    "site": "amazon",
+    "product_url": "https://www.amazon.com/Stanley-Resistant-Insulated-Stainless-BPA-Free/dp/B0DR9Q1Q6L/",
+    "title": "STANLEY IceFlow 2.0 Flip Straw Tumbler with Handle 40 oz | Twist On Lid and Flip Up Straw | Leak Resistant Water Bottle | Insulated Stainless Steel | BPA-Free | Black 2.0",
+    "price_text": "$45.0",
+    "rating": 4.7,
+    "review_count": 71322,
+    "image_url": "/product-images/amazon-19.jpg"
+  },
+  {
+    "id": "amazon-20",
+    "site": "amazon",
+    "product_url": "https://www.amazon.com/STANLEY-Leakproof-Compatible-insulated-Stainless/dp/B0H1YJM5W8/",
+    "title": "STANLEY Quencher ProTour Flip Straw Tumbler with Leakproof Lid 30 oz | Built-in Straw and Handle | Cup Holder Compatible for Travel | insulated Stainless Steel Cup | BPA-Free | Sorbet Garden",
+    "price_text": "$30.0",
+    "rating": 4.7,
+    "review_count": 18870,
+    "image_url": "/product-images/amazon-20.jpg"
+  },
+  {
+    "id": "amazon-21",
+    "site": "amazon",
+    "product_url": "https://www.amazon.com/Dr-Browns-Milestones-Insulated-Spill-Proof/dp/B0DYF7CC7X/",
+    "title": "Dr. Brown's Milestones Insulated Sippy Cup with Straw and Handles, Spill-Proof Tumbler with Lid, Pink/Coral, 10 oz/300 mL, BPA-Free, 12m+, 2-Pack",
+    "price_text": "$9.98",
+    "rating": 4.5,
+    "review_count": 820,
+    "image_url": "/product-images/amazon-21.jpg"
+  },
+  {
+    "id": "amazon-22",
+    "site": "amazon",
+    "product_url": "https://www.amazon.com/Contigo-Snapseal-Insulated-Travel-Sake/dp/B083TB53TJ/",
+    "title": "Contigo Byron Vacuum-Insulated Stainless Steel Travel Mug with Leak-Proof Lid, Reusable Coffee Cup or Water Bottle, BPA-Free, 20oz 2-Pack in Sake & Blue Corn Perfect for Hot and Cold Beverages",
+    "price_text": "$29.78",
+    "rating": 4.6,
+    "review_count": 44414,
+    "image_url": "/product-images/amazon-22.jpg"
+  },
+  {
+    "id": "amazon-23",
+    "site": "amazon",
+    "product_url": "https://www.amazon.com/Stanley-Resistant-Insulated-Stainless-BPA-Free/dp/B0DR9PJVS1/",
+    "title": "Stanley IceFlow 2.0 Flip Straw Tumbler with Handle 30 oz | Twist On Lid and Flip Up Straw | Leak Resistant Water Bottle | Insulated Stainless Steel | BPA-Free | Lilac",
+    "price_text": "$35.0",
+    "rating": 4.8,
+    "review_count": 357,
+    "image_url": "/product-images/amazon-23.jpg"
+  },
+  {
+    "id": "amazon-24",
+    "site": "amazon",
+    "product_url": "https://www.amazon.com/REDUCE-Saltini-Cocktail-Tumbler-Shatterproof/dp/B0DGRLK24N/",
+    "title": "REDUCE Saltini 16 oz Cocktail Tumbler - Insulated Margarita Tumbler with Lid - Keeps Drinks Cold for 10 Hours - 360 Sippable Martini Glass Alternative - Shatterproof, Perfect for Parties - Daiquiri",
+    "price_text": "$27.99",
+    "rating": 4.7,
+    "review_count": 1396,
+    "image_url": "/product-images/amazon-24.jpg"
+  },
+  {
+    "id": "walmart-1",
+    "site": "walmart",
+    "product_url": "https://www.walmart.com/ip/MS-LT-GRAY-18OZ/16484820140",
+    "title": "Mainstays - Light Gray Round Plastic Tumbler, 18-Ounce",
+    "price_text": "$0.5",
+    "rating": 4.7,
+    "review_count": 338,
+    "image_url": "/product-images/walmart-1.jpg"
+  },
+  {
+    "id": "walmart-2",
+    "site": "walmart",
+    "product_url": "https://www.walmart.com/ip/MS-TUMBLER-NAVY-BLUE/17946463576",
+    "title": "Mainstays 26 Ounce Round Plastic Etched Blueberry Tumbler, Navy",
+    "price_text": "$0.5",
+    "rating": 4.8,
+    "review_count": 527,
+    "image_url": "/product-images/walmart-2.jpg"
+  },
+  {
+    "id": "walmart-3",
+    "site": "walmart",
+    "product_url": "https://www.walmart.com/ip/MS-20OZ-CLEAR-TUMBLE/17170064897",
+    "title": "20-ounce Clear Plastic Tumbler with Screw Top Lid and Straw, by Mainstays",
+    "price_text": "$1.0",
+    "rating": 4.6,
+    "review_count": 379,
+    "image_url": "/product-images/walmart-3.jpg"
+  },
+  {
+    "id": "walmart-4",
+    "site": "walmart",
+    "product_url": "https://www.walmart.com/ip/BHG-RIB-GL-TBLR-LID/5196632029",
+    "title": "Better Homes & Gardens Glass 21oz Tumbler Ribbed with Glass Lid and Straw",
+    "price_text": "$4.94",
+    "rating": 4.3,
+    "review_count": 1048,
+    "image_url": "/product-images/walmart-4.jpg"
+  },
+  {
+    "id": "walmart-5",
+    "site": "walmart",
+    "product_url": "https://www.walmart.com/ip/CAROTE-2-Pack-Sip-Free-Insulated-Stainless-Steel-Water-Bottle-Straw-BPA-Free-Sports-Water-Bottle-Great-Travel-Sunshine-Coast-Handle-Tumbler-16oz-Pink/17662217755",
+    "title": "Carote Insulated Stainless Steel Tumbler with Handle and Lid, Leakproof Double Wall Vacuum Travel Mug, Reusable Cup for Hot & Cold Drinks, Caramel Brown, 32oz",
+    "price_text": "$13.99",
+    "rating": 4.4,
+    "review_count": 43,
+    "image_url": "/product-images/walmart-5.jpg"
+  },
+  {
+    "id": "walmart-6",
+    "site": "walmart",
+    "product_url": "https://www.walmart.com/ip/TAL-Stainless-Steel-Hudson-Tumbler-with-Straw-40-fl-oz-Black/3496273481",
+    "title": "TAL 40oz Stainless Steel Hudson Tumbler with Straw, Black",
+    "price_text": "$16.88",
+    "rating": 4.5,
+    "review_count": 3243,
+    "image_url": "/product-images/walmart-6.jpg"
+  },
+  {
+    "id": "walmart-7",
+    "site": "walmart",
+    "product_url": "https://www.walmart.com/ip/TAL-Stainless-Steel-Ash-Tumbler-with-Straw-26-fl-oz-Pink/14075405254",
+    "title": "TAL 26oz Stainless Steel Ash Tumbler with Removeable Straw and Sip Lid, Pink",
+    "price_text": "$11.88",
+    "rating": 4.3,
+    "review_count": 210,
+    "image_url": "/product-images/walmart-7.jpg"
+  },
+  {
+    "id": "walmart-8",
+    "site": "walmart",
+    "product_url": "https://www.walmart.com/ip/TAL-Stainless-Steel-Rowan-Tumbler-with-Straw-24-fl-oz-Sage/14061603363",
+    "title": "TAL 24oz Stainless Steel Rowan Tumbler with Silicone Straw, Sage",
+    "price_text": "$11.88",
+    "rating": 3.8,
+    "review_count": 169,
+    "image_url": "/product-images/walmart-8.jpg"
+  },
+  {
+    "id": "walmart-9",
+    "site": "walmart",
+    "product_url": "https://www.walmart.com/ip/BHG-RIB-TUMBLER-GREN/18052013032",
+    "title": "Better Homes and Gardens 21-Ounce Tall Green Ribbed Tritan Tumbler",
+    "price_text": "$2.48",
+    "rating": 4.6,
+    "review_count": 32,
+    "image_url": "/product-images/walmart-9.jpg"
+  },
+  {
+    "id": "walmart-10",
+    "site": "walmart",
+    "product_url": "https://www.walmart.com/ip/Better-Homes-Gardens-16-oz-Dome-Lid-Glass-Tumbler-Clear/13553453692",
+    "title": "Better Homes & Gardens 16 oz Dome Lid Glass Tumbler, Clear",
+    "price_text": "$3.78",
+    "rating": 4.1,
+    "review_count": 200,
+    "image_url": "/product-images/walmart-10.jpg"
+  },
+  {
+    "id": "walmart-11",
+    "site": "walmart",
+    "product_url": "https://www.walmart.com/ip/MSK-3PK-TUMBLER/18887265018",
+    "title": "Mainstays Kids 15 oz Multicolor Plastic Tumblers, Set of 3",
+    "price_text": "$6.34",
+    "rating": 4.6,
+    "review_count": 24,
+    "image_url": "/product-images/walmart-11.jpg"
+  },
+  {
+    "id": "walmart-12",
+    "site": "walmart",
+    "product_url": "https://www.walmart.com/ip/TAL-Stainless-Steel-Hudson-Tumbler-with-Straw-64oz-Mauve/5164703400",
+    "title": "TAL 64oz Stainless Steel Hudson Tumbler with Straw, Mauve",
+    "price_text": "$19.47",
+    "rating": 4.5,
+    "review_count": 1054,
+    "image_url": "/product-images/walmart-12.jpg"
+  },
+  {
+    "id": "walmart-13",
+    "site": "walmart",
+    "product_url": "https://www.walmart.com/ip/MS-30OZ-BUBL-BLACK/17062103893",
+    "title": "Mainstays 30 oz Black Bubble Pattern Tumbler with Handle",
+    "price_text": "$5.47",
+    "rating": 4.7,
+    "review_count": 217,
+    "image_url": "/product-images/walmart-13.jpg"
+  },
+  {
+    "id": "walmart-14",
+    "site": "walmart",
+    "product_url": "https://www.walmart.com/ip/BHG-GREEN-SIPPER-W-A/18052455720",
+    "title": "Better Homes and Gardens Green Tritan Sipper Tumbler with Acacia Wood Lid and Straw, 21-Ounce",
+    "price_text": "$4.97",
+    "rating": 4.7,
+    "review_count": 95,
+    "image_url": "/product-images/walmart-14.jpg"
+  },
+  {
+    "id": "walmart-15",
+    "site": "walmart",
+    "product_url": "https://www.walmart.com/ip/Thyme-Table-32oz-Tumbler-with-Handle-Dual-Straw-Lid-Stainless-Steel-Double-Wall-Insulated-Cream-Black-Check/6661562298",
+    "title": "Thyme & Table 32 fl oz Stainless Steel Luna Tumbler with Handle and Dual Straw Lid, Cream & Black Check",
+    "price_text": "$13.88",
+    "rating": 4.7,
+    "review_count": 3288,
+    "image_url": "/product-images/walmart-15.jpg"
+  },
+  {
+    "id": "walmart-16",
+    "site": "walmart",
+    "product_url": "https://www.walmart.com/ip/Ozark-Trail-40-oz-Insulated-Stainless-Steel-Tumbler-With-Handle-Tan/10521563013",
+    "title": "Ozark Trail 40 oz Stainless Steel Insulated Tumbler with Handle, Tan",
+    "price_text": "$18.0",
+    "rating": 4.6,
+    "review_count": 9964,
+    "image_url": "/product-images/walmart-16.jpg"
+  },
+  {
+    "id": "walmart-17",
+    "site": "walmart",
+    "product_url": "https://www.walmart.com/ip/Ello-Avery-18oz-Glass-Tumbler-Cream/14726812240",
+    "title": "Ello Avery 18oz Glass Tumbler with Straw & Silicone Sleeve, Cream",
+    "price_text": "$9.97",
+    "rating": 4.6,
+    "review_count": 92,
+    "image_url": "/product-images/walmart-17.jpg"
+  },
+  {
+    "id": "walmart-18",
+    "site": "walmart",
+    "product_url": "https://www.walmart.com/ip/Zak-Designs-20oz-Gilmore-Girls-Glass-Hadley-Tumbler/16251164396",
+    "title": "Zak Designs 20oz Gilmore Girls Glass Hadley Tumbler",
+    "price_text": "$6.97",
+    "rating": 4.5,
+    "review_count": 208,
+    "image_url": "/product-images/walmart-18.jpg"
+  },
+  {
+    "id": "walmart-19",
+    "site": "walmart",
+    "product_url": "https://www.walmart.com/ip/BHG-CLEAR-RIBBED-SIP/18039715815",
+    "title": "Better Homes and Gardens 22-Ounce Clear Ribbed Tritan Tumbler with Straw and Acacia Wood Lid",
+    "price_text": "$4.97",
+    "rating": 4.4,
+    "review_count": 71,
+    "image_url": "/product-images/walmart-19.jpg"
+  },
+  {
+    "id": "walmart-20",
+    "site": "walmart",
+    "product_url": "https://www.walmart.com/ip/Simple-Modern-40-fl-oz-Insulated-Stainless-Steel-Trek-Tumbler-with-Straw-Lid-Electric-Lavender-Leopard/6659464067",
+    "title": "Simple Modern 40 fl oz Insulated Stainless Steel Trek Tumbler with Straw Lid | Electric Lavender Leopard",
+    "price_text": "$27.97",
+    "rating": 4.7,
+    "review_count": 633,
+    "image_url": "/product-images/walmart-20.jpg"
+  }
+]
