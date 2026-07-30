@@ -105,9 +105,14 @@ class WinningProduct(BaseModel):
     score: float
     # "observed" | "rank_vs_depth" | "none" -- see module docstring.
     momentum_basis: str
-    # Percent rank improvement between the oldest and newest snapshot. Present
-    # only when momentum_basis == "observed"; None is "not measured", never 0.
+    # Rank movement between the oldest and newest snapshot, as a share of the
+    # chart's depth. Present only when momentum_basis == "observed"; None is
+    # "not measured", never 0.
     momentum_pct: Optional[float] = None
+    # The same movement in raw chart places (positive = climbed). Carried
+    # alongside the percentage because "moved up 30 places" is the sentence a
+    # buyer actually reasons with, and a percentage of chart depth is not.
+    momentum_positions: Optional[int] = None
     # The 0-1 single-scan inference. Present when it was computable at all, and
     # used for the score only when momentum_basis == "rank_vs_depth".
     breakout: Optional[float] = None
@@ -230,12 +235,21 @@ def build(
         # Observed history wins whenever it exists.
         points = [h["rank"] for h in history.get(row["asin"], [])]
         momentum_pct: Optional[float] = None
+        momentum_positions: Optional[int] = None
         if len(points) >= 2:
             basis = "observed"
             first, last = points[0], points[-1]
-            # Rank is inverted: moving from 40 to 10 is a gain.
-            momentum_pct = round(((first - last) / first) * 100, 1)
-            # Map [-100%, +100%] onto 0-1 for the composite.
+            # Rank is inverted: moving from 40 to 10 is a gain of 30 places.
+            momentum_positions = first - last
+            # Expressed against the chart's own depth, NOT against the starting
+            # rank. Dividing by `first` looks natural and is badly asymmetric at
+            # the top of a chart: 1 -> 3 reads as -200% while the identical
+            # movement back, 3 -> 1, reads as +67%. Against chart depth the two
+            # are -4% and +4% on a 50-row chart, which is what actually happened
+            # -- a two-place wobble near the top of a list of fifty.
+            momentum_pct = round((momentum_positions / n) * 100, 1) if n else 0.0
+            # Bounded to [-100, +100] by construction, so this maps cleanly onto
+            # 0-1 with "didn't move" landing at 0.5 rather than at an end.
             momentum_component = max(0.0, min(1.0, (momentum_pct + 100) / 200))
         else:
             basis = "rank_vs_depth"
@@ -264,6 +278,7 @@ def build(
                 score=score,
                 momentum_basis=basis,
                 momentum_pct=momentum_pct,
+                momentum_positions=momentum_positions,
                 breakout=round(breakout, 3),
                 rank_history=points,
                 snapshots=len(points),

@@ -459,7 +459,21 @@ body {
 .export-row {
   display: flex;
   justify-content: flex-end;
+  gap: 8px;
   margin-bottom: 16px;
+}
+
+/* Pressed state for the metrics toggle. A plain secondary-button gives no
+   indication of which way it is set, and the control is sticky across
+   searches — so on return the user needs to read its state, not remember it. */
+.metrics-toggle-on {
+  background: #14161a;
+  border-color: #14161a;
+  color: #fff;
+}
+.metrics-toggle-on:hover {
+  background: #2a2f36;
+  border-color: #2a2f36;
 }
 
 .results-grid {

@@ -68,11 +68,26 @@ function NoSpark({ snapshots }) {
 }
 
 function Momentum({ p }) {
-  if (p.momentum_basis === "observed" && p.momentum_pct != null) {
-    const up = p.momentum_pct >= 0;
+  if (p.momentum_basis === "observed" && p.momentum_positions != null) {
+    const moved = p.momentum_positions;
+    if (moved === 0) {
+      return (
+        <span className="delta muted" title="Held its exact chart position between scans.">
+          — held
+        </span>
+      );
+    }
+    const up = moved > 0;
+    // Places, not percent: "up 30 places" is the sentence a buyer reasons with.
+    // The share of chart depth rides in the tooltip for anyone who wants it.
     return (
-      <span className="delta" style={{ color: up ? "var(--rise)" : "var(--fall)" }}>
-        {up ? "▲" : "▼"} {Math.abs(p.momentum_pct)}%
+      <span
+        className="delta"
+        style={{ color: up ? "var(--rise)" : "var(--fall)" }}
+        title={`${Math.abs(p.momentum_pct)}% of the chart's depth, across ${p.snapshots} scans`}
+      >
+        {up ? "▲" : "▼"} {Math.abs(moved)}
+        <em className="delta-unit">{Math.abs(moved) === 1 ? "place" : "places"}</em>
       </span>
     );
   }
@@ -286,8 +301,10 @@ export default function WinningProductsView() {
               <p>{BASIS_HELP[open.momentum_basis]}</p>
               <p className="mono basis-stat">
                 {open.snapshots} snapshot(s) recorded
-                {open.momentum_basis === "observed" && open.momentum_pct != null
-                  ? ` · rank moved ${open.momentum_pct}%`
+                {open.momentum_basis === "observed" && open.momentum_positions != null
+                  ? ` · moved ${open.momentum_positions > 0 ? "up" : "down"} ${Math.abs(
+                      open.momentum_positions
+                    )} place(s), ${Math.abs(open.momentum_pct)}% of chart depth`
                   : ""}
               </p>
             </div>

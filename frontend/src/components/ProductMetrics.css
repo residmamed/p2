@@ -1,0 +1,138 @@
+/* Per-card metrics panel. Sits inside .product-card, so it stays visually
+   subordinate to the title and price — it is supporting evidence, not the
+   headline. */
+
+.product-metrics {
+  margin: 8px 0 2px;
+  padding: 8px 9px 7px;
+  background: #f6f8f9;
+  border: 1px solid #e3e9ec;
+  border-radius: 5px;
+  font-size: 11.5px;
+  line-height: 1.35;
+}
+
+.product-metrics-empty {
+  color: #7b868f;
+  font-style: italic;
+  padding: 7px 9px;
+}
+
+.pm-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-bottom: 7px;
+}
+
+.pm-score-chip {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+  background: #14161a;
+  color: #fff;
+  border-radius: 4px;
+  padding: 3px 8px;
+}
+.pm-score-chip b {
+  font-size: 14px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.pm-score-label {
+  font-size: 9.5px;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  opacity: 0.82;
+}
+
+.pm-partial {
+  font-size: 9.5px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #8a6d1f;
+  background: #fdf4dc;
+  border: 1px solid #ecdcae;
+  border-radius: 3px;
+  padding: 2px 5px;
+}
+
+.pm-bar-row {
+  display: grid;
+  grid-template-columns: 52px 1fr 22px;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 3px;
+}
+.pm-bar-label {
+  color: #5f6a73;
+}
+.pm-bar-track {
+  display: block;
+  height: 4px;
+  background: #e0e6ea;
+  border-radius: 2px;
+  overflow: hidden;
+}
+.pm-bar-track i {
+  display: block;
+  height: 100%;
+  background: #3e6ea8;
+  border-radius: 2px;
+}
+.pm-bar-value {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  color: #40484f;
+}
+
+.pm-facts {
+  margin-top: 7px;
+  padding-top: 6px;
+  border-top: 1px solid #e3e9ec;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.pm-fact {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  color: #5f6a73;
+}
+.pm-fact-value {
+  color: #22282d;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+.pm-fact-value em {
+  font-style: normal;
+  color: #8a939b;
+}
+.pm-below {
+  color: #2f7d32;
+}
+.pm-above {
+  color: #a8533898;
+}
+.pm-basis .pm-fact-value {
+  font-size: 11px;
+}
+
+.pm-footnote {
+  margin-top: 6px;
+  font-size: 10px;
+  color: #8a939b;
+  line-height: 1.4;
+}
+
+/* The grid packs cards tightly; on narrow cards the bar labels would wrap and
+   push the panel taller than the thumbnail. */
+@media (max-width: 560px) {
+  .pm-bar-row {
+    grid-template-columns: 46px 1fr 20px;
+  }
+  .product-metrics {
+    font-size: 11px;
+  }
+}

@@ -77,13 +77,13 @@ def test_observed_history_supersedes_the_inference():
 
     riser = by_asin["RISER"]
     assert riser.momentum_basis == "observed"
-    assert riser.momentum_pct == 75.0
+    assert riser.momentum_positions == 30  # 40 -> 10
     assert riser.rank_history == [40, 22, 10]
     assert riser.snapshots == 3
 
     incumbent = by_asin["INCUMBENT"]
     assert incumbent.momentum_basis == "observed"
-    assert incumbent.momentum_pct == -200.0  # 1 -> 3 is a loss, and says so
+    assert incumbent.momentum_positions == -2  # 1 -> 3 is a loss, and says so
 
     # A product with no history keeps the inference; the two coexist per-row.
     assert by_asin["MIDDLE"].momentum_basis == "rank_vs_depth"
@@ -129,3 +129,52 @@ def test_score_components_reconstruct_the_score():
             + winning.W_QUALITY * p.quality_component
         )
         assert abs(expected - p.score) < 0.35
+
+
+def test_rank_movement_is_symmetric():
+    """1 -> 3 and 3 -> 1 are the same two-place movement and must report the
+    same magnitude. Dividing by the starting rank reported -200% against +67%,
+    which made an ordinary wobble at the top of a chart look like a collapse."""
+    charts = {
+        "bestsellers": [chart_row(f"A{i}", i, 1000 * i) for i in range(1, 51)],
+        "new_releases": [],
+    }
+    charts["bestsellers"][0]["asin"] = "TOP"
+
+    down = winning.build(
+        charts,
+        category="kitchen",
+        history={"TOP": [{"scanned_at": "a", "rank": 1}, {"scanned_at": "b", "rank": 3}]},
+    )
+    up = winning.build(
+        charts,
+        category="kitchen",
+        history={"TOP": [{"scanned_at": "a", "rank": 3}, {"scanned_at": "b", "rank": 1}]},
+    )
+    fell = next(p for p in down if p.asin == "TOP")
+    rose = next(p for p in up if p.asin == "TOP")
+
+    assert fell.momentum_positions == -2
+    assert rose.momentum_positions == 2
+    assert fell.momentum_pct == -rose.momentum_pct
+    # ...and expressed against the chart's depth, not the starting rank.
+    assert rose.momentum_pct == 4.0  # 2 places on a 50-row chart
+
+
+def test_momentum_component_is_bounded_and_neutral_when_still():
+    """A product that held its exact position is neither rewarded nor punished."""
+    charts = {
+        "bestsellers": [chart_row(f"A{i}", i, 1000 * i) for i in range(1, 51)],
+        "new_releases": [],
+    }
+    charts["bestsellers"][10]["asin"] = "STILL"
+    products = winning.build(
+        charts,
+        category="kitchen",
+        history={"STILL": [{"scanned_at": "a", "rank": 11}, {"scanned_at": "b", "rank": 11}]},
+    )
+    still = next(p for p in products if p.asin == "STILL")
+    assert still.momentum_positions == 0
+    assert still.momentum_component == 0.5
+    for p in products:
+        assert 0.0 <= p.momentum_component <= 1.0

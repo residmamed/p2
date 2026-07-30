@@ -11,7 +11,8 @@ import { exportProductsToExcel } from "../exportExcel";
 import { searchBestSellers, searchBestSellersByImage, findSuppliersByImage, findMoreFromStore, clearSupplierCache, PRODUCT_SEARCH_MS, LENS_SOURCING_MS, MFR_SEARCH_MS } from "../api";
 import { PRODUCT_SEARCH_SITES, MANUFACTURER_SITES, SITE_LABELS, SITE_COLORS } from "../sites";
 import { useI18n } from "../i18n";
-import { useRecentSearches, RUN_SEARCH_EVENT } from "../store";
+import { useRecentSearches, useStoredState, RUN_SEARCH_EVENT } from "../store";
+import { opportunityScores } from "../productMetrics";
 import { userWarnings } from "../warnings";
 import { splitSuppliers, SUPPLIERS_SHOWN } from "../supplierFilter";
 
@@ -434,6 +435,9 @@ export default function BestSellersView() {
   const [lensMode, setLensMode] = useState(null); // null | "exact" | "similar"
   const [searchMode, setSearchMode] = useState("text"); // drives the loading label
   const [selectedIds, setSelectedIds] = useState(() => new Set());
+  // Sticky across searches: a buyer who works with the metrics open should not
+  // have to re-open them on every query.
+  const [showMetrics, setShowMetrics] = useStoredState("p2_show_metrics", false);
 
   // Manufacturer search state
   const [mfrLoading, setMfrLoading] = useState(false);
@@ -610,6 +614,17 @@ export default function BestSellersView() {
   function productKey(product) {
     return product.product_url || product.id;
   }
+
+  // Opportunity Score is cohort-relative, so it is computed once over the whole
+  // result set and keyed by product — deliberately over `products` rather than
+  // `shownProducts`, so filtering the grid narrows what you see without
+  // silently restating every score against the survivors.
+  const metricsByKey = useMemo(() => {
+    const scores = opportunityScores(products);
+    const map = new Map();
+    products.forEach((p, i) => map.set(p.product_url || p.id, scores[i]));
+    return map;
+  }, [products]);
 
   function toggleSelect(product) {
     const key = productKey(product);
@@ -992,6 +1007,15 @@ export default function BestSellersView() {
             />
             <button
               type="button"
+              className={`secondary-button metrics-toggle ${showMetrics ? "metrics-toggle-on" : ""}`}
+              onClick={() => setShowMetrics(!showMetrics)}
+              aria-pressed={showMetrics}
+              title={t("metricsToggleHint")}
+            >
+              {showMetrics ? t("metricsHide") : t("metricsShow")}
+            </button>
+            <button
+              type="button"
               className="secondary-button results-export"
               onClick={() => exportProductsToExcel(shownProducts, "products.xlsx")}
               disabled={!shownProducts.length}
@@ -1030,6 +1054,8 @@ export default function BestSellersView() {
                   selectable
                   selected={selectedIds.has(productKey(product))}
                   onToggleSelect={toggleSelect}
+                  metrics={metricsByKey.get(productKey(product))}
+                  showMetrics={showMetrics}
                 />
               ))}
             </div>

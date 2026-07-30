@@ -434,3 +434,13 @@
     padding-right: 18px;
   }
 }
+
+/* Unit label beside a rank movement. Smaller and lighter than the number, so
+   the magnitude reads first and the unit only confirms it. */
+.wp .delta-unit {
+  font-style: normal;
+  font-size: 9.5px;
+  letter-spacing: 0.05em;
+  margin-left: 3px;
+  opacity: 0.72;
+}
