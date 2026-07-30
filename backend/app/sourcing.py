@@ -74,7 +74,18 @@ DEFAULT_SITES = ["alibaba", "1688", "made_in_china"]
 
 # Browserbase plans cap concurrent browsers (3 on Free, 25 on Developer). Going
 # over doesn't queue — the session create fails outright — so cap below the tier.
-DISCOVERY_CONCURRENCY = 3
+#
+# This bounds the sites within ONE request, and a request has at most four of
+# them, so it is not where a plan gets filled: several requests in flight is.
+# Configurable all the same, via SOURCING_DISCOVERY_CONCURRENCY, because the
+# right number depends on a plan this code cannot see.
+#
+# Worth knowing before tuning it: on the by-URL path (which is what Manufacturer
+# Search and the background prefetch both use) Alibaba and 1688 go to Apify
+# actors and use no browser at all — only Made-in-China does. So a typical
+# request holds one session, not three. Three is the worst case, when both Apify
+# actors come back empty and fall back to the browser upload.
+DISCOVERY_CONCURRENCY = settings.sourcing_discovery_concurrency
 
 # Enriching every listing's company page would multiply Zyte calls by ~40 per
 # search for rows the user will never scroll to. Enrich the best ones only.

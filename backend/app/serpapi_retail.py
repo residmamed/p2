@@ -33,7 +33,7 @@ import asyncio
 
 import httpx
 
-from .config import settings
+from . import credentials
 from .models import Product
 from .product_images import best_image
 from .retail_browser import _parse_sold
@@ -60,7 +60,7 @@ class SerpApiError(Exception):
 
 
 def is_configured() -> bool:
-    return bool(settings.serpapi_key)
+    return bool(credentials.SERPAPI)
 
 
 def _to_float(value) -> float | None:
@@ -206,7 +206,7 @@ async def search(site_id: str, query: str, page: int = 1) -> tuple[list[Product]
     params = {
         **ENGINE_PARAMS[site_id],
         QUERY_PARAM[site_id]: query,
-        "api_key": settings.serpapi_key,
+        "api_key": credentials.SERPAPI.next(),
     }
     if page > 1:
         params["page"] = str(page)

@@ -11,6 +11,7 @@ import json
 import httpx
 import pytest
 
+from app.credentials import KeyPool
 from app.oxylabs_client import (
     OXYLABS_REALTIME_URL,
     SOURCE_FOR_SITE,
@@ -111,13 +112,16 @@ async def test_rejected_credentials_raise_the_auth_error_not_a_generic_one():
 
 @pytest.mark.asyncio
 async def test_unconfigured_client_raises_before_any_request(monkeypatch):
-    """Patched at the settings level rather than passing empty strings: an
-    explicit "" falls back to the env, the same way ZyteClient's key does, so
-    this must simulate an unset env to mean anything."""
+    """Patched at the credential-pool level rather than passing empty strings:
+    an explicit "" falls back to the configured account, the same way
+    ZyteClient's key does, so this must simulate an unset env to mean anything.
+
+    The pool is what "unset" means now — Oxylabs can hold several accounts
+    (app/credentials.py), and an empty pool is the only way to say there is no
+    account at all."""
     from app import oxylabs_client
 
-    monkeypatch.setattr(oxylabs_client.settings, "oxylabs_username", "")
-    monkeypatch.setattr(oxylabs_client.settings, "oxylabs_password", "")
+    monkeypatch.setattr(oxylabs_client.credentials, "OXYLABS", KeyPool("OXYLABS", []))
     oxy = OxylabsClient()
     assert oxy.is_configured() is False
     with pytest.raises(OxylabsAuthError, match="not configured"):

@@ -6,7 +6,8 @@ browser — minutes, and bot-checked on Alibaba essentially every time — this 
 never touches the sites' search at all:
 
     STEP 1  SerpApi Google Lens   photo -> product URLs across the whole web
-    STEP 2  Oxylabs Web Scraper   each Alibaba/1688 URL -> supplier, price, MOQ
+    STEP 2  Oxylabs Web Scraper   each Alibaba/1688/Made-in-China URL ->
+                                  supplier, price, MOQ
 
 Both are plain REST. Step 1 is one round trip that answers in ~1-2s; step 2 is
 N independent fetches fired concurrently. The target is the whole thing under
@@ -100,11 +101,40 @@ UPLOAD_TIMEOUT = 8.0
 MAX_ENRICH = 10
 ENRICH_CONCURRENCY = 6
 
-# Enrichment targets, per the brief. Taobao listings are still returned — Lens
-# finds them and dropping a real result to keep a schema tidy is not a trade
-# worth making — they simply arrive on their Lens data with `enriched: false`.
-ENRICH_SITES = {"alibaba", "1688"}
-MARKETPLACES = ("alibaba", "1688", "taobao")
+# Enrichment targets. Taobao listings are still returned — Lens finds them and
+# dropping a real result to keep a schema tidy is not a trade worth making —
+# they simply arrive on their Lens data with `enriched: false`.
+#
+# Made-in-China was added 2026-07-30 on measurement rather than assumption. Over
+# the 36 searches then in the Lens cache (12,040 candidates), Lens returned:
+#
+#     alibaba         89 hits
+#     made-in-china   19 hits, 19 of them resolvable
+#     taobao           1 hit
+#     1688             0 hits
+#
+# — so it is the second-best-served supplier site in this pipeline, and unusually
+# every one of its hits carried a real destination rather than a Lens redirect.
+# It also parses well: `parsing/marketplace_product.py`'s generic og:/JSON-LD
+# layers already read its title, image, price and — via JSON-LD `brand` — the
+# factory's own name, which is the field Alibaba needs a bespoke blob reader for.
+ENRICH_SITES = {"alibaba", "1688", "made_in_china"}
+MARKETPLACES = ("alibaba", "1688", "taobao", "made_in_china")
+
+# Lens returns Made-in-China category, keyword-search and video pages alongside
+# real listings — measured, 6 of 19 were one of those. They are not products:
+# enriching one spends an Oxylabs call to read a directory page, and showing it
+# as a supplier row puts a link to a search result where a factory should be. So
+# a MIC hit has to look like a listing to become a result, and the rest are
+# reported as context. Both of the site's listing shapes are covered:
+#
+#     <company>.en.made-in-china.com/product/<id>/<slug>.html
+#     <locale>.made-in-china.com/co_<company>/product_<slug>.html
+#
+# `/products-search/` deliberately matches neither — it contains the word but not
+# the separator, which is the whole reason this tests for `/product/` and
+# `/product_` rather than for the substring "product".
+MIC_PRODUCT_PATH = ("/product/", "/product_")
 
 MAX_PARTIAL_MATCHES = 25
 MAX_IMAGE_BYTES = 8 * 1024 * 1024
@@ -218,11 +248,30 @@ MARKETPLACE_BY_SOURCE_LABEL = {
     "taobao.com": "taobao",
     "taobao": "taobao",
     "taobao global": "taobao",
+    "made-in-china.com": "made_in_china",
+    "made-in-china": "made_in_china",
+    "made in china": "made_in_china",
 }
 
 
 def _is_redirect(url: str) -> bool:
     return _domain_of(url) in LENS_REDIRECT_HOSTS
+
+
+def _is_product_page(candidate: LensCandidate) -> bool:
+    """Does this marketplace hit point at a listing, or at a directory page?
+
+    Only asked of Made-in-China, whose Lens results mix the two. Every other
+    site here returns product URLs or nothing, and inventing a shape test for
+    them would reject listings on a guess. See MIC_PRODUCT_PATH.
+    """
+    if candidate.marketplace != "made_in_china":
+        return True
+    try:
+        path = urlparse(candidate.product_url).path.lower()
+    except ValueError:
+        return False
+    return any(marker in path for marker in MIC_PRODUCT_PATH)
 
 
 def _marketplace_from_source(source_name: Optional[str]) -> Optional[str]:
@@ -252,6 +301,15 @@ def _canonical(url: str) -> str:
     # are the same listing in two languages.
     if host.endswith(".alibaba.com"):
         host = "alibaba.com"
+    # Made-in-China needs the opposite care taken. One label in front of the
+    # domain is a locale (`fr.`, `es.`, `m.`, `www.`) and collapses like
+    # Alibaba's; two is a supplier's own minisite
+    # (`wisdomhouseware.en.made-in-china.com`), where the subdomain IS the
+    # company and flattening it would merge two factories' listings into one.
+    elif host.endswith(".made-in-china.com"):
+        prefix = host[: -len(".made-in-china.com")]
+        if "." not in prefix:
+            host = "made-in-china.com"
     path = parts.path.rstrip("/") or "/"
     return urlunparse(("https", host, path, "", "", "")).lower()
 
@@ -308,7 +366,7 @@ async def _lens_call(
                 "engine": "google_lens",
                 "type": search_type,
                 "url": image_url,
-                "api_key": settings.serpapi_key,
+                "api_key": credentials.SERPAPI.next(),
             },
         )
     except httpx.HTTPError as e:
@@ -371,7 +429,7 @@ def _dedupe(candidates: list[LensCandidate]) -> list[LensCandidate]:
 
 async def _run_lens(image_url: str) -> tuple[list[LensCandidate], list[str]]:
     """Both Lens searches, concurrently, inside step 1's budget."""
-    if not settings.serpapi_key:
+    if not credentials.SERPAPI:
         raise FindSuppliersError(
             "Google Lens is not configured — set SERPAPI_KEY in backend/.env."
         )
@@ -454,6 +512,42 @@ def _merged(candidate: LensCandidate, parsed: ParsedProduct) -> SupplierMatch:
     )
 
 
+def _enrich_targets(candidates: list[LensCandidate]) -> list[LensCandidate]:
+    """Choose which listings get an Oxylabs call, dealt round-robin by site.
+
+    Taking the first MAX_ENRICH of the Lens ordering spends the whole budget on
+    whichever site returned most. Measured 2026-07-30 on a live 40oz-tumbler
+    search: 58 marketplace hits, 55 of them Alibaba and 3 Made-in-China, and all
+    ten slots went to Alibaba — every Made-in-China row came back unenriched,
+    with no supplier name and no MOQ, which is the entire value of the site.
+
+    Volume is not quality here. Lens returns more Alibaba because Google indexes
+    more Alibaba, not because those listings match better, so letting it decide
+    the budget silently turns a multi-site search back into a single-site one.
+    Dealing a slot to each site in turn is the same fairness rule
+    sourcing._vision_candidates applies to its vision budget, for the same
+    reason. Sites are dealt in order of first appearance, so the one Lens
+    matched best still leads.
+    """
+    by_site: dict[str, list[LensCandidate]] = {}
+    for candidate in candidates:
+        if candidate.marketplace in ENRICH_SITES:
+            by_site.setdefault(candidate.marketplace, []).append(candidate)
+
+    picked: list[LensCandidate] = []
+    round_index = 0
+    while len(picked) < MAX_ENRICH:
+        added = False
+        for bucket in by_site.values():
+            if round_index < len(bucket) and len(picked) < MAX_ENRICH:
+                picked.append(bucket[round_index])
+                added = True
+        if not added:
+            break
+        round_index += 1
+    return picked
+
+
 async def _enrich(
     candidates: list[LensCandidate], oxylabs: Optional[OxylabsClient] = None
 ) -> tuple[list[SupplierMatch], list[str], list[str]]:
@@ -481,7 +575,7 @@ async def _enrich(
             [],
         )
 
-    targets = [c for c in candidates if c.marketplace in ENRICH_SITES][:MAX_ENRICH]
+    targets = _enrich_targets(candidates)
     target_urls = [c.product_url for c in targets]
     outcomes = await scrape_many(target_urls, oxylabs, concurrency=ENRICH_CONCURRENCY)
     by_url = {url: (html, error) for url, html, error in outcomes}
@@ -665,18 +759,33 @@ async def find_suppliers(
     # A marketplace hit only becomes a supplier row if we know where it points.
     # Everything else — retail matches, and marketplace matches stuck behind a
     # Lens redirect — is context.
-    marketplace_hits = [c for c in candidates if c.marketplace in MARKETPLACES and c.resolvable]
-    unreachable = [c for c in candidates if c.marketplace in MARKETPLACES and not c.resolvable]
+    marketplace = [c for c in candidates if c.marketplace in MARKETPLACES]
+    marketplace_hits = [c for c in marketplace if c.resolvable and _is_product_page(c)]
+    unreachable = [c for c in marketplace if not c.resolvable]
+    # Reachable, on a supplier site, and still not a listing — a Made-in-China
+    # category or keyword-search page. Context, never a supplier row.
+    non_product = [c for c in marketplace if c.resolvable and not _is_product_page(c)]
     others = [c for c in candidates if c.marketplace is None]
 
     if not candidates:
         warnings.append("Google Lens matched this image to nothing on the web.")
     elif not marketplace_hits:
         warnings.append(
-            f"Google Lens found {len(candidates)} match(es) but none reachable on Alibaba, "
-            "1688 or Taobao — Lens's coverage of Chinese B2B listings is partial and varies "
-            "by category. The retail matches it did find are in partial_matches. For a "
-            "search of the marketplaces' own image indexes, use /api/sourcing/by-url."
+            f"Google Lens found {len(candidates)} match(es) but no reachable listing on "
+            "Alibaba, 1688, Taobao or Made-in-China — Lens's coverage of Chinese B2B "
+            "listings is partial and varies by category. The retail matches it did find are "
+            "in partial_matches. For a search of the marketplaces' own image indexes, use "
+            "/api/sourcing/by-url."
+        )
+    if non_product:
+        # Said plainly because the alternative is worse than silence: these
+        # would otherwise be enriched as if they were listings, and a category
+        # page parses into a supplier row with a plausible title and no factory
+        # behind it.
+        warnings.append(
+            f"{len(non_product)} Made-in-China match(es) were category, keyword-search or "
+            "video pages rather than product listings, so they were not enriched. They are "
+            "in partial_matches with their Lens link."
         )
     if unreachable:
         # Naming the count matters: without it, "no marketplace results" reads
@@ -708,10 +817,13 @@ async def find_suppliers(
         warnings.extend(await supplier_contacts.enrich_matches(results, oxylabs))
         contacts_ms = int((time.perf_counter() - contacts_started) * 1000)
 
-    # Unreachable marketplace hits lead: they are the closest thing to a
-    # supplier lead in this list, and burying them under retail rows would hide
-    # the one fact the warning above just promised.
-    context = (unreachable + others)[:MAX_PARTIAL_MATCHES]
+    # Marketplace hits lead: they are the closest thing to a supplier lead in
+    # this list, and burying them under retail rows would hide the one fact the
+    # warnings above just promised. Unreachable first, then the reachable
+    # not-a-listing pages — a Made-in-China category page for the right product
+    # is at least a page the user can open and search themselves.
+    supplier_context = unreachable + non_product
+    context = (supplier_context + others)[:MAX_PARTIAL_MATCHES]
     partial_matches = [
         PartialMatch(
             title=c.title,
@@ -724,10 +836,10 @@ async def find_suppliers(
         )
         for c in context
     ]
-    dropped = len(unreachable) + len(others) - len(context)
+    dropped = len(supplier_context) + len(others) - len(context)
     if dropped:
         warnings.append(
-            f"Showing {MAX_PARTIAL_MATCHES} of {len(unreachable) + len(others)} "
+            f"Showing {MAX_PARTIAL_MATCHES} of {len(supplier_context) + len(others)} "
             "context match(es)."
         )
 

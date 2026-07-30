@@ -2,6 +2,13 @@ from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
+    # NOTE ON CREDENTIALS: the four metered vendors — Zyte, Apify, SerpApi and
+    # Oxylabs — are read through app/credentials.py, not from here, because each
+    # can be given more than one account (`SERPAPI_KEY`, `SERPAPI_KEY_2`, …) and
+    # a single field cannot hold a pool. The base fields stay declared below so
+    # that a missing key is still a startup failure rather than a 401 an hour
+    # later, and so the rest of the settings file reads as the whole list of
+    # what this app is configured with. Do not add new reads of them.
     zyte_api_key: str
     apify_token: str = ""
     pinterest_actor: str = "fetch_cat~pinterest-search-scraper"
@@ -56,6 +63,13 @@ class Settings(BaseSettings):
     # login. Reusing it is the supported way to reach the login-gated supplier
     # fields; automating the multi-step SPA login per run risks the account.
     browserbase_context_id_made_in_china: str = ""
+    # How many supplier sites one sourcing request drives at once. The ceiling
+    # that matters is the Browserbase plan's concurrent-browser cap — 3 on Free,
+    # 25 on Developer — and going over it does not queue, the session create
+    # fails outright. Raising this alone buys little, because a request only ever
+    # has four sites to run; the number of *requests* in flight is what fills a
+    # plan, and that is set by the caller (see the frontend's PREFETCH_PARALLEL).
+    sourcing_discovery_concurrency: int = 3
 
     # Vision models available for future match verification. Unused today —
     # carried over with the credentials so they're configured when needed.

@@ -4,6 +4,7 @@ until the actor run finishes, so this is a plain awaited request.
 """
 import httpx
 
+from . import credentials
 from .config import settings
 from .models import InspirationImage
 
@@ -39,10 +40,12 @@ def _pick_link(item: dict) -> str | None:
 
 
 async def search_pinterest(idea: str, n: int = 20) -> list[InspirationImage]:
-    if not settings.apify_token:
+    if not credentials.APIFY:
         raise PinterestError("APIFY_TOKEN is not configured — set it in backend/.env")
 
-    url = APIFY_URL_TEMPLATE.format(actor=settings.pinterest_actor, token=settings.apify_token)
+    url = APIFY_URL_TEMPLATE.format(
+        actor=settings.pinterest_actor, token=credentials.APIFY.next()
+    )
     async with httpx.AsyncClient(timeout=90.0) as client:
         response = await client.post(
             url,

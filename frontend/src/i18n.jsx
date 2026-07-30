@@ -36,9 +36,7 @@ const STRINGS = {
     findMoreFailed: "Couldn't fetch more from this store.",
     mfrResultsHeading: "Manufacturers",
     manufacturersFor: "Manufacturers for",
-    manufacturersCount: (n) => `${n} manufacturer${n === 1 ? "" : "s"} found`,
-    showMoreSuppliers: (n) => `More (${n})`,
-    showFewerSuppliers: (n) => `Show fewer (top ${n})`,
+    manufacturersCount: (n) => `${n} listing${n === 1 ? "" : "s"} found`,
     hiddenUnconfirmed: (n) =>
       `${n} more listing${n === 1 ? "" : "s"} hidden — either not confirmed as this product, or no supplier could be identified.`,
     noneConfirmed:
@@ -47,7 +45,12 @@ const STRINGS = {
     colSource: "Source",
     colMatch: "Match",
     colNotAvailable: "N/A",
-    yearsOnPlatform: (n) => `${n} yr${n === 1 ? "" : "s"} on platform`,
+    // The listing on the marketplace, which is what each row is now for.
+    colListing: "Listing",
+    openListingOn: (site) => `Open on ${site}`,
+    listingNoLink: "No link published",
+    // Tooltip on the dot in the corner of a product card.
+    supplierMark: (n) => `${n} supplier listing${n === 1 ? "" : "s"} found for this item`,
 
     // How confident we are that a supplier listing is the same product as the
     // photo it was found with, and how that was decided.
@@ -68,15 +71,41 @@ const STRINGS = {
       "Google Lens found a similar-looking image. A lead, not a confirmed match.",
     lensNotEnriched: "Supplier details couldn't be read from this listing.",
     mfrLatency: (s) => `Found in ${s}s`,
-    openSupplierSite: "Open this supplier's page",
     msgConnectAccounts: "Connected accounts",
     msgAccountConnected: "Connected",
     msgAccountDisconnected: "Not connected",
     msgConnectSoon: "Connecting accounts is coming soon. Messages are drafted here in the meantime.",
     mfrSearchFailed: "The supplier search couldn't be completed. Please try again.",
     mfrNoResults: "No suppliers found for these products.",
+    // Live counts while the supplier search runs. Products are searched one
+    // request each and land separately, so both halves are real numbers.
+    supplierProgress: (done, total, found) =>
+      `${done} of ${total} product${total === 1 ? "" : "s"} checked · ${found} supplier${found === 1 ? "" : "s"} found so far`,
+    supplierProgressNone: (done, total) =>
+      `${done} of ${total} product${total === 1 ? "" : "s"} checked · no suppliers yet`,
+    supplierProgressDeep: (done, total, found) =>
+      `${done} of ${total} searched on the marketplaces · ${found} supplier${found === 1 ? "" : "s"} found so far`,
+    // Store names scrolling past while a long search runs. The verb rotates each
+    // time the list of stores comes round again.
+    tickerScanning: (store) => `Scanning ${store}…`,
+    tickerReading: (store) => `Reading ${store} listings…`,
+    tickerRanking: (store) => `Ranking ${store} best sellers…`,
+    tickerCollecting: (store) => `Collecting prices from ${store}…`,
+    tickerLensLooking: (store) => `Looking for this photo on ${store}…`,
+    tickerLensExact: (store) => `Checking ${store} for an exact match…`,
+
+    // The background supplier lookup that starts as soon as products land.
+    prefetchWorking: "Finding suppliers in the background…",
+    prefetchReady: (n) => `${n} supplier${n === 1 ? "" : "s"} ready`,
+    prefetchReadyNone: "Checked — no suppliers found",
+    prefetchTitle:
+      "Suppliers for these products are being looked up now, so the manufacturer search comes back straight away.",
+    prefetchDismiss: "Hide",
+    tickerMatching: (store) => `Matching the photo on ${store}…`,
+    tickerOpening: (store) => `Opening ${store} listings…`,
+    tickerPricing: (store) => `Reading ${store} prices and MOQ…`,
+    tickerProfiling: (store) => `Checking ${store} supplier profiles…`,
     deepSearching: (n) => `No quick match for ${n} product${n === 1 ? "" : "s"} — searching the marketplaces directly (slower)…`,
-    colCompany: "Company",
     colRating: "Rating",
     colPrice: "Price",
     colMoq: "MOQ",
@@ -266,9 +295,7 @@ const STRINGS = {
     findMoreFailed: "Bu mağazadan daha çox nəticə alınmadı.",
     mfrResultsHeading: "İstehsalçılar",
     manufacturersFor: "İstehsalçılar:",
-    manufacturersCount: (n) => `${n} istehsalçı tapıldı`,
-    showMoreSuppliers: (n) => `Daha çox (${n})`,
-    showFewerSuppliers: (n) => `Daha az göstər (ilk ${n})`,
+    manufacturersCount: (n) => `${n} elan tapıldı`,
     hiddenUnconfirmed: (n) =>
       `${n} elan gizlədildi — ya bu məhsul kimi təsdiqlənmədi, ya da təchizatçı müəyyən edilmədi.`,
     noneConfirmed:
@@ -277,7 +304,10 @@ const STRINGS = {
     colSource: "Mənbə",
     colMatch: "Uyğunluq",
     colNotAvailable: "Yoxdur",
-    yearsOnPlatform: (n) => `platformada ${n} il`,
+    colListing: "Elan",
+    openListingOn: (site) => `${site} saytında aç`,
+    listingNoLink: "Keçid yoxdur",
+    supplierMark: (n) => `Bu məhsul üçün ${n} təchizatçı elanı tapıldı`,
 
     matchTier_identical: "Eyni şəkil",
     matchTier_exact: "Eyni məhsul",
@@ -294,15 +324,36 @@ const STRINGS = {
       "Google Lens oxşar şəkil tapdı. Bu bir ipucudur, təsdiqlənmiş uyğunluq deyil.",
     lensNotEnriched: "Bu elandan təchizatçı məlumatları oxuna bilmədi.",
     mfrLatency: (s) => `${s}s-də tapıldı`,
-    openSupplierSite: "Bu təchizatçının səhifəsini aç",
     msgConnectAccounts: "Qoşulmuş hesablar",
     msgAccountConnected: "Qoşulub",
     msgAccountDisconnected: "Qoşulmayıb",
     msgConnectSoon: "Hesabların qoşulması tezliklə əlavə olunacaq. Hələlik mesajlar burada hazırlanır.",
     mfrSearchFailed: "Təchizatçı axtarışı tamamlana bilmədi. Yenidən cəhd edin.",
     mfrNoResults: "Bu məhsullar üçün təchizatçı tapılmadı.",
+    supplierProgress: (done, total, found) =>
+      `${total} məhsuldan ${done} yoxlanıldı · indiyədək ${found} təchizatçı tapıldı`,
+    supplierProgressNone: (done, total) =>
+      `${total} məhsuldan ${done} yoxlanıldı · hələ təchizatçı yoxdur`,
+    supplierProgressDeep: (done, total, found) =>
+      `${total} məhsuldan ${done} marketpleyslərdə axtarıldı · indiyədək ${found} təchizatçı tapıldı`,
+    tickerScanning: (store) => `${store} skan edilir…`,
+    tickerReading: (store) => `${store} elanları oxunur…`,
+    tickerRanking: (store) => `${store} ən çox satılanları sıralanır…`,
+    tickerCollecting: (store) => `${store} qiymətləri toplanır…`,
+    tickerLensLooking: (store) => `Bu şəkil ${store} üzərində axtarılır…`,
+    tickerLensExact: (store) => `${store} dəqiq uyğunluq üçün yoxlanılır…`,
+
+    prefetchWorking: "Təchizatçılar arxa fonda axtarılır…",
+    prefetchReady: (n) => `${n} təchizatçı hazırdır`,
+    prefetchReadyNone: "Yoxlanıldı — təchizatçı tapılmadı",
+    prefetchTitle:
+      "Bu məhsullar üçün təchizatçılar indi axtarılır, ona görə istehsalçı axtarışı dərhal nəticə verəcək.",
+    prefetchDismiss: "Gizlət",
+    tickerMatching: (store) => `Şəkil ${store} üzərində uyğunlaşdırılır…`,
+    tickerOpening: (store) => `${store} elanları açılır…`,
+    tickerPricing: (store) => `${store} qiymət və MOQ oxunur…`,
+    tickerProfiling: (store) => `${store} təchizatçı profilləri yoxlanılır…`,
     deepSearching: (n) => `${n} məhsul üçün sürətli uyğunluq yoxdur — birbaşa marketpleyslərdə axtarılır (daha yavaş)…`,
-    colCompany: "Şirkət",
     colRating: "Reytinq",
     colPrice: "Qiymət",
     colMoq: "Min. sifariş",

@@ -28,7 +28,7 @@ import asyncio
 
 import httpx
 
-from .config import settings
+from . import credentials
 from .models import Product
 
 SERPAPI_URL = "https://serpapi.com/search"
@@ -65,7 +65,7 @@ class SerpLensError(Exception):
 
 
 def is_configured() -> bool:
-    return bool(settings.serpapi_key)
+    return bool(credentials.SERPAPI)
 
 
 async def _publish(image_bytes: bytes, content_type: str) -> str:
@@ -130,7 +130,7 @@ async def _search_one(client: httpx.AsyncClient, image_url: str, search_type: st
                 "engine": "google_lens",
                 "type": search_type,
                 "url": image_url,
-                "api_key": settings.serpapi_key,
+                "api_key": credentials.SERPAPI.next(),
             },
         )
     except httpx.HTTPError as e:

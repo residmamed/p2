@@ -17,6 +17,7 @@ and the app disagree about what a field means, because those fail silently:
 import pytest
 
 from app.apify_retail import ACTORS, _etsy_price, _is_error_record, fetch_site
+from app.credentials import KeyPool
 
 TARGET_ITEM = {
     "tcin": "1012180040",
@@ -242,7 +243,9 @@ async def test_blocked_run_reports_the_sites_own_message(monkeypatch):
             return FakeResponse()
 
     monkeypatch.setattr("app.apify_retail.httpx.AsyncClient", lambda **kw: FakeClient())
-    monkeypatch.setattr("app.apify_retail.settings", type("S", (), {"apify_token": "t"})())
+    # Apify credentials live in a pool now (app/credentials.py), so "configured"
+    # is a pool with something in it rather than a settings field with a value.
+    monkeypatch.setattr("app.apify_retail.credentials.APIFY", KeyPool("APIFY_TOKEN", ["t"]))
 
     products, warnings = await fetch_site("bestbuy", "wireless headphones")
     assert products == []

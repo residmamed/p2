@@ -4,7 +4,7 @@ from urllib.parse import quote
 
 from playwright.async_api import async_playwright
 
-from ..config import settings
+from .. import credentials
 from ..models import Product
 from ..parsing.alibaba_parser import parse_search_results
 from ..zyte_client import ZyteClient
@@ -63,7 +63,7 @@ class AlibabaScraper(Scraper):
             browser = await p.chromium.launch(
                 proxy={
                     "server": "https://api.zyte.com:8014",
-                    "username": settings.zyte_api_key,
+                    "username": credentials.ZYTE.next() or "",
                     "password": "",
                 },
                 headless=True,

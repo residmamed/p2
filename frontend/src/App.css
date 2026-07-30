@@ -432,6 +432,194 @@ body {
   color: var(--ink);
 }
 
+/* Live counts under the bar — how many products are done, and how many
+   suppliers have actually been found so far. */
+.progress-detail {
+  margin-top: 10px;
+  text-align: center;
+  font-size: 0.85rem;
+  color: var(--ink-soft);
+}
+
+.progress-detail strong {
+  color: var(--ink);
+  font-weight: 700;
+}
+
+/* ---------- Background supplier prefetch ---------- */
+
+.prefetch-ring {
+  position: fixed;
+  right: 20px;
+  bottom: 20px;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px 8px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.12);
+  animation: prefetch-in 0.3s ease-out;
+}
+
+.prefetch-ring-dial {
+  position: relative;
+  width: 40px;
+  height: 40px;
+  flex-shrink: 0;
+}
+
+/* Fills clockwise from the top rather than from three o'clock. Scoped to the
+   dial itself — the tick sits inside this box too, and an unscoped `svg` rule
+   turned it on its side. */
+.prefetch-ring-svg {
+  transform: rotate(-90deg);
+}
+
+.prefetch-ring-track,
+.prefetch-ring-fill {
+  fill: none;
+  stroke-width: 3;
+}
+
+.prefetch-ring-track {
+  stroke: var(--border);
+}
+
+.prefetch-ring-fill {
+  stroke: var(--accent);
+  stroke-linecap: round;
+  transition: stroke-dashoffset 0.4s ease;
+}
+
+.prefetch-ring-ready .prefetch-ring-fill {
+  stroke: #0f9d58;
+}
+
+.prefetch-ring-value {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.68rem;
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.prefetch-ring-ready .prefetch-ring-value {
+  color: #0f9d58;
+}
+
+.prefetch-ring-text {
+  font-size: 0.82rem;
+  color: var(--ink-soft);
+  max-width: 190px;
+}
+
+.prefetch-ring-ready .prefetch-ring-text {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.prefetch-ring-close {
+  border: none;
+  background: none;
+  cursor: pointer;
+  padding: 2px 4px;
+  font-size: 0.75rem;
+  line-height: 1;
+  color: var(--ink-soft);
+  opacity: 0.6;
+}
+
+.prefetch-ring-close:hover {
+  opacity: 1;
+}
+
+@keyframes prefetch-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .prefetch-ring {
+    animation: none;
+  }
+  .prefetch-ring-fill {
+    transition: none;
+  }
+}
+
+/* ---------- Search ticker ---------- */
+
+/* Fixed height for KEEP lines: the row is on screen for minutes and must not
+   shove the results below it around as lines arrive. */
+.ticker {
+  height: 66px;
+  margin: -6px 0 10px;
+  overflow: hidden;
+}
+
+.ticker-line {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  height: 22px;
+  font-size: 0.85rem;
+  color: var(--ink-soft);
+  /* Older lines recede rather than disappearing, so the row reads as a stack
+     scrolling past instead of a single label flickering. */
+  opacity: calc(1 - var(--depth) * 0.33);
+  animation: ticker-in 0.35s ease-out;
+}
+
+.ticker-line:first-child {
+  color: var(--ink);
+}
+
+.ticker-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.ticker-line:first-child .ticker-dot {
+  animation: ticker-pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes ticker-in {
+  from {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+}
+
+@keyframes ticker-pulse {
+  0%,
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  50% {
+    transform: scale(1.5);
+    opacity: 0.55;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ticker-line,
+  .ticker-line:first-child .ticker-dot {
+    animation: none;
+  }
+}
+
 .status-message {
   text-align: center;
   padding: 16px;
@@ -567,6 +755,27 @@ body {
   text-overflow: ellipsis;
   overflow: hidden;
   white-space: nowrap;
+}
+
+/* "Suppliers were found for this one." Deliberately near-invisible until
+   looked for: a 7px dot in the corner of the photo, half-opaque, brightening
+   only on hover. Anything louder would compete with the price and the rating,
+   which are what the grid is actually for. */
+.supplier-mark {
+  position: absolute;
+  right: 9px;
+  bottom: 9px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #0f9d58;
+  opacity: 0.5;
+  box-shadow: 0 0 0 2.5px color-mix(in srgb, var(--surface) 75%, transparent);
+  transition: opacity 0.15s ease;
+}
+
+.product-card:hover .supplier-mark {
+  opacity: 0.95;
 }
 
 .match-badge {
@@ -758,14 +967,6 @@ body {
   max-width: 46ch;
 }
 
-/* Reveals the suppliers past the first five. Full width so it reads as the
-   end of the table rather than as another row action. */
-.mfr-more-button {
-  width: 100%;
-  margin-top: 10px;
-  font-size: 0.85rem;
-}
-
 /* Manufacturer rows — text only, no images. Scroll horizontally at any width
    that can't fit all 8 fixed columns rather than clipping the Margin column. */
 .mfr-table {
@@ -774,9 +975,11 @@ body {
 }
 .mfr-row {
   display: grid;
-  /* 7 columns: check, source, match, company, rating, price, MOQ. The phone
-     column was removed — supplier phone numbers are not shown in this UI. */
-  grid-template-columns: 34px 120px 128px minmax(180px, 1fr) 140px 150px 120px;
+  /* 7 columns: check, source, match, listing, rating, price, MOQ. The phone
+     column was removed — supplier phone numbers are not shown in this UI. The
+     listing column takes the slack: it holds a marketplace product title now,
+     not a company name. */
+  grid-template-columns: 34px 118px 126px minmax(260px, 1fr) 130px 140px 110px;
   gap: 12px;
   align-items: center;
   padding: 10px 0;
@@ -804,18 +1007,38 @@ body {
   gap: 3px;
   min-width: 0;
 }
-.mfr-company-name {
-  font-weight: 600;
+/* The listing on the marketplace — the row's main content and the thing to
+   click. Two lines at most: these titles are keyword-stuffed and a long one
+   would otherwise set the height of every row in the table. */
+.mfr-listing {
+  display: inline-flex;
+  align-items: flex-start;
+  gap: 6px;
   color: var(--ink);
-}
-/* Only rendered as a link when the listing actually published a company page,
-   so the underline is a reliable signal that there is somewhere to go. */
-.mfr-company-link {
+  font-weight: 600;
   text-decoration: none;
-  border-bottom: 1px solid color-mix(in srgb, var(--ink) 25%, transparent);
+  min-width: 0;
 }
-.mfr-company-link:hover {
-  border-bottom-color: currentColor;
+.mfr-listing svg {
+  flex-shrink: 0;
+  margin-top: 3px;
+  opacity: 0.55;
+}
+.mfr-listing:hover {
+  color: var(--accent);
+}
+.mfr-listing:hover svg {
+  opacity: 1;
+}
+.mfr-listing:hover .mfr-listing-title {
+  text-decoration: underline;
+}
+.mfr-listing-title {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 .mfr-email {
   display: inline-flex;
@@ -2154,17 +2377,6 @@ body {
 }
 .match-badge-similar {
   background: rgba(180, 83, 9, 0.92);
-}
-
-/* Business type / named contact / years, under the company name. Secondary to
-   the name but load-bearing: on these marketplaces it is usually the only
-   supplier detail published, since email and phone are withheld. */
-.mfr-company-meta {
-  font-size: 0.75rem;
-  color: var(--ink-soft);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 

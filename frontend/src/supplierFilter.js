@@ -37,12 +37,16 @@ export function isConfirmedSeller(supplier) {
   // which is strong evidence they are selling that product; a visual match
   // means it merely resembles it, which is a lead and not a seller.
   //
-  // The name is required as well. A row whose enrichment failed is still a real
-  // listing, but it has no company behind it — rendering it in a table of
-  // suppliers means an empty company cell, and "here is a supplier" is not a
-  // claim we can make when we could not read who they are.
+  // A link to the listing is required as well — that is now the whole content
+  // of the row, and one without it has nothing to open.
+  //
+  // This used to require the *company name* instead, back when the grid led with
+  // it: a row whose enrichment couldn't read a supplier meant an empty company
+  // cell. The grid leads with the listing now, so that gate was throwing away
+  // real listings on Alibaba and Made-in-China for the sake of a column that no
+  // longer exists.
   if (supplier.match_basis === "lens") {
-    return tier === "lens_exact" && !!supplier.seller_name;
+    return tier === "lens_exact" && !!supplier.product_url;
   }
   if (supplier.match_basis === "vision") return CONFIRMED_TIERS.has(tier);
   // A hash can only ever prove the reused-file case; it cannot recognise a
@@ -65,7 +69,3 @@ export function splitSuppliers(suppliers = []) {
   }
   return { sellers, unconfirmed, confirmedOnly: true };
 }
-
-// How many supplier rows a product shows before the "More" button. Five is
-// enough to compare on price and MOQ without the page becoming a spreadsheet.
-export const SUPPLIERS_SHOWN = 5;

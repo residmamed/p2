@@ -57,7 +57,7 @@ from urllib.parse import quote_plus
 
 import httpx
 
-from .config import settings
+from . import credentials
 from .models import Product
 from .product_images import best_image
 
@@ -72,7 +72,7 @@ class ApifyRetailError(Exception):
 
 
 def is_configured() -> bool:
-    return bool(settings.apify_token)
+    return bool(credentials.APIFY)
 
 
 def _num(value: Any, cast: Callable):
@@ -537,7 +537,7 @@ async def fetch_site(site: str, query: str, max_items: int = DEFAULT_MAX_ITEMS) 
         async with httpx.AsyncClient(timeout=TIMEOUT_SECONDS) as client:
             response = await client.post(
                 url,
-                params={"token": settings.apify_token, "timeout": int(TIMEOUT_SECONDS)},
+                params={"token": credentials.APIFY.next(), "timeout": int(TIMEOUT_SECONDS)},
                 json=config.build_input(query, max_items),
             )
     except httpx.HTTPError as e:

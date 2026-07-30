@@ -69,6 +69,7 @@ import json
 import re
 from dataclasses import dataclass
 from typing import Optional
+from urllib.parse import urlparse
 
 from parsel import Selector
 
@@ -140,13 +141,26 @@ MARKETPLACE_NAMES = {
     "alibaba", "alibaba.com", "alibaba group", "1688", "1688.com",
     "taobao", "taobao.com", "tmall", "tmall.com", "aliexpress", "aliexpress.com",
     "阿里巴巴", "淘宝",
+    "made-in-china", "made-in-china.com", "made in china", "made in china.com",
 }
 
 # "... Perfect For Office Gym Travel - Buy  Product on Alibaba.com" — the site
 # appends its own SEO tail to og:title. Anchored to the end so it can only ever
 # remove a trailing boilerplate phrase, never bite into the product's name.
 TITLE_SUFFIX_RE = re.compile(
-    r"\s*[-–|]\s*(?:buy\b.*?on\s+)?(?:alibaba\.com|1688\.com|taobao\.com|阿里巴巴|淘宝网?)\s*$",
+    r"\s*[-–|]\s*(?:buy\b.*?on\s+)?"
+    r"(?:alibaba\.com|1688\.com|taobao\.com|made-in-china\.com|阿里巴巴|淘宝网?)\s*$",
+    re.I,
+)
+
+# Made-in-China prefixes og:title with its own merchandising flag — measured
+# 2026-07-30, both live pages came back as "[Hot Item] 40oz Double Wall...".
+# It is the site talking about its own listing, not part of the product's name,
+# and it would sort a results table by whichever products the site is promoting.
+# Anchored to the start, and only the known flags, so it cannot eat a product
+# name that legitimately opens with a bracket.
+TITLE_PREFIX_RE = re.compile(
+    r"^\s*\[\s*(?:hot\s*item|recommended|new\s*item|hot\s*sale|top\s*sale)\s*\]\s*",
     re.I,
 )
 
@@ -379,10 +393,40 @@ def _clean_supplier(name: Optional[str]) -> Optional[str]:
     return cleaned[:160] or None
 
 
+# Made-in-China's product page names the seller in a `com-name` block whose
+# anchor points at the company's own subdomain — confirmed 2026-07-30 on two
+# live pages, both `<p class="com-name"><a href="https://<company>.en.made-in-
+# china.com">`. Restricted to that host so a layout change can only ever return
+# nothing, never send a buyer to whatever else the block came to hold.
+MIC_SUPPLIER_LINK_SELECTORS = (
+    ".com-name a::attr(href)",
+    "[class*=com-name] a::attr(href)",
+)
+
+
+def _made_in_china_supplier_url(selector: Selector) -> Optional[str]:
+    for css in MIC_SUPPLIER_LINK_SELECTORS:
+        for href in selector.css(css).getall():
+            href = (href or "").strip()
+            if not href:
+                continue
+            absolute = _absolute(href)
+            try:
+                host = (urlparse(absolute).hostname or "").lower()
+            except ValueError:
+                continue
+            # A company subdomain, not the marketplace's own front page — the
+            # latter is a link to Made-in-China, which is not a supplier.
+            if host.endswith(".made-in-china.com") and not host.startswith("www."):
+                return absolute
+    return None
+
+
 def _clean_title(title: Optional[str]) -> Optional[str]:
     if not title:
         return None
     cleaned = TITLE_SUFFIX_RE.sub("", html_module.unescape(title)).strip()
+    cleaned = TITLE_PREFIX_RE.sub("", cleaned).strip()
     return cleaned[:300] or None
 
 
@@ -654,6 +698,13 @@ def _parse(html: str, site: str) -> ParsedProduct:
         # fractional "minimum order" is a mis-keyed field, not a real quantity.
         blob.moq = f"{int(moq_count)} {unit}".strip() if moq_count == int(moq_count) else None
     _fill(parsed, blob)
+
+    # 4b. Made-in-China's company link. It ships no `companyProfileUrl` blob, so
+    # without this the supplier's name arrives from JSON-LD `brand` with nothing
+    # to click — and the company page is where the contact details are. The name
+    # is already correct by this point, so this only ever adds the href.
+    if site == "made_in_china" and not parsed.supplier_url:
+        parsed.supplier_url = _made_in_china_supplier_url(selector)
 
     # 5. visible text, over the body only — the <head> carries marketing copy
     # and the site's own adverts, which is where a stray price would come from.

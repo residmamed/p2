@@ -22,6 +22,7 @@ import base64
 
 import httpx
 
+from . import credentials
 from .config import settings
 from .models import Product
 
@@ -77,10 +78,15 @@ def _parse_dataset_items(items: list[dict]) -> list[Product]:
     return products
 
 
-async def _start_run(client: httpx.AsyncClient, data_uri: str) -> str:
+# Every step below takes the Apify token as an argument rather than reading it,
+# because this is a start-then-poll flow and the three steps must run on one
+# account. A run started on account A does not exist on account B: polling it
+# there 404s and the dataset comes back empty, so rotating mid-flow would turn a
+# working search into a silent no-results. `_run_lens_query` picks once.
+async def _start_run(client: httpx.AsyncClient, data_uri: str, token: str) -> str:
     response = await client.post(
         f"{APIFY_BASE}/acts/{settings.google_lens_actor}/runs",
-        params={"token": settings.apify_token},
+        params={"token": token},
         json={"searchTypes": SEARCH_TYPES, "imagesBase64": [data_uri]},
         headers={"Content-Type": "application/json"},
     )
@@ -89,7 +95,7 @@ async def _start_run(client: httpx.AsyncClient, data_uri: str) -> str:
     return response.json()["data"]["id"]
 
 
-async def _wait_for_run(client: httpx.AsyncClient, run_id: str) -> str:
+async def _wait_for_run(client: httpx.AsyncClient, run_id: str, token: str) -> str:
     elapsed = 0
     status = "READY"
     while elapsed < MAX_POLL_SECONDS:
@@ -97,7 +103,7 @@ async def _wait_for_run(client: httpx.AsyncClient, run_id: str) -> str:
         elapsed += POLL_INTERVAL_SECONDS
         try:
             response = await client.get(
-                f"{APIFY_BASE}/actor-runs/{run_id}", params={"token": settings.apify_token}
+                f"{APIFY_BASE}/actor-runs/{run_id}", params={"token": token}
             )
             response.raise_for_status()
         except httpx.HTTPError:
@@ -108,9 +114,9 @@ async def _wait_for_run(client: httpx.AsyncClient, run_id: str) -> str:
     return status
 
 
-async def _fetch_dataset_items(client: httpx.AsyncClient, run_id: str) -> list[dict]:
+async def _fetch_dataset_items(client: httpx.AsyncClient, run_id: str, token: str) -> list[dict]:
     response = await client.get(
-        f"{APIFY_BASE}/actor-runs/{run_id}/dataset/items", params={"token": settings.apify_token}
+        f"{APIFY_BASE}/actor-runs/{run_id}/dataset/items", params={"token": token}
     )
     if not (200 <= response.status_code < 300):
         raise GoogleLensError(f"Could not fetch Google Lens results ({response.status_code}): {response.text[:300]}")
@@ -120,12 +126,17 @@ async def _fetch_dataset_items(client: httpx.AsyncClient, run_id: str) -> list[d
 async def _run_lens_query(image_bytes: bytes, content_type: str) -> list[Product]:
     data_uri = f"data:{content_type};base64,{base64.b64encode(image_bytes).decode('ascii')}"
 
+    # One account for the whole run — see the note above _start_run.
+    token = credentials.APIFY.next()
+    if not token:
+        raise GoogleLensError("APIFY_TOKEN is not configured — set it in backend/.env")
+
     async with httpx.AsyncClient(timeout=30.0) as client:
-        run_id = await _start_run(client, data_uri)
-        status = await _wait_for_run(client, run_id)
+        run_id = await _start_run(client, data_uri, token)
+        status = await _wait_for_run(client, run_id, token)
         if status != "SUCCEEDED":
             raise GoogleLensError(f"Google Lens run did not succeed (status={status})")
-        items = await _fetch_dataset_items(client, run_id)
+        items = await _fetch_dataset_items(client, run_id, token)
 
     return _parse_dataset_items(items)
 
@@ -134,7 +145,7 @@ async def search_google_lens_products(image_bytes: bytes, content_type: str) -> 
     """Returns (products, warnings). Google Lens can genuinely find nothing for a
     given crop — one empty-result retry is attempted before surfacing a warning
     instead of silently returning nothing."""
-    if not settings.apify_token:
+    if not credentials.APIFY:
         raise GoogleLensError("APIFY_TOKEN is not configured — set it in backend/.env")
 
     try:

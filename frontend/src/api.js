@@ -175,16 +175,26 @@ function _deepPending(product, mfrSites) {
 // `signal` is accepted and ignored: every lookup here is cached and therefore
 // shared, so no single caller may cancel it. Callers check their own signal after
 // awaiting instead.
-export async function searchManufacturers(products, { mfrSites = [] } = {}) {
+//
+// `onProduct` fires as each product's search lands, with how many listings it
+// returned and which product they were for — the products run concurrently and
+// finish minutes apart, so this is the only place that knows anything before the
+// last one is back.
+export async function searchManufacturers(products, { mfrSites = [], onProduct } = {}) {
   const targets = products.filter((p) => p.image_url);
   const skipped = products.length - targets.length;
 
   const settled = await Promise.all(
     targets.map(async (product) => {
       try {
-        return { product, data: await _lookupDeep(product, mfrSites).promise };
+        const data = await _lookupDeep(product, mfrSites).promise;
+        // Listings map one-to-one onto supplier rows below, so this count is
+        // what the caller will end up showing.
+        onProduct?.((data.results ?? []).length, product);
+        return { product, data };
       } catch (error) {
         if (error.name === "AbortError") throw error;
+        onProduct?.(0, product);
         return { product, error };
       }
     })
@@ -192,12 +202,17 @@ export async function searchManufacturers(products, { mfrSites = [] } = {}) {
 
   const groups = [];
   const warnings = [];
+  // Products whose search threw rather than answering. Reported separately from
+  // the warnings — a caller that wants to try them again needs the products
+  // themselves, and a warning string is a message, not a work list.
+  const failed = [];
   if (skipped > 0) {
     warnings.push(`${skipped} product(s) had no photo to search with and were skipped.`);
   }
 
   for (const { product, data, error } of settled) {
     if (error) {
+      failed.push(product);
       warnings.push(`[${product.title?.slice(0, 40) ?? "product"}] ${error.message}`);
       continue;
     }
@@ -235,7 +250,7 @@ export async function searchManufacturers(products, { mfrSites = [] } = {}) {
     if (suppliers.length) groups.push({ product, suppliers });
   }
 
-  return { groups, warnings };
+  return { groups, warnings, failed };
 }
 
 // --- Lens Sourcing (Method 2) ----------------------------------------------
@@ -312,6 +327,31 @@ function lensSupplierRow(match) {
 // sent along to produce a 400.
 const DEEP_SEARCH_SITES = ["alibaba", "1688", "made_in_china"];
 
+// Sites Google Lens structurally cannot serve, so selecting one means nothing
+// unless the deep search runs for it specifically.
+//
+// Measured 2026-07-30 over the 36 searches in the backend's 30-day Lens cache —
+// 12,040 candidates, counted by hostname:
+//
+//     alibaba         89
+//     made-in-china   19
+//     taobao           1
+//     1688             0
+//
+// Zero is not a slow category or a bad photo. 1688.com is Alibaba's *domestic*
+// Chinese site and sits almost entirely outside Google's index, so no photo will
+// ever produce a 1688 row through Lens. The listings do exist — the Apify
+// `devcake/scraper-by-image` actor behind /api/sourcing/by-url returns them with
+// shop name, MOQ and price — but that path used to run only for products the
+// fast path missed *entirely*. Any product where Lens found an Alibaba listing
+// therefore never queried 1688 at all, which is why a user with 1688 ticked
+// could search all day and never see one.
+//
+// So coverage is now judged per selected site rather than per product. Kept to
+// the sites with a measured zero: a site Lens *does* serve, missing from one
+// product's results, is an ordinary miss and not worth minutes of browser time.
+const LENS_BLIND_SITES = ["1688"];
+
 /**
  * Find suppliers for each chosen product via Lens Sourcing.
  *
@@ -368,17 +408,54 @@ export function clearSupplierCache() {
 
 export async function findSuppliersByImage(
   products,
-  { mfrSites = [], includeContacts = false, signal, deepFallback = true, onDeepSearch } = {}
+  {
+    mfrSites = [],
+    includeContacts = false,
+    signal,
+    deepFallback = true,
+    onDeepSearch,
+    onProgress,
+    // Fires once per product, when NOTHING further in this call will add to its
+    // suppliers — after the fast pass for a product that needs no deep search,
+    // after the deep search for one that does. Distinct from onProgress, which
+    // reports each pass as it lands: a product with rows from Lens can still
+    // gain more from the marketplaces a minute later, so a caller that wants to
+    // say "this item is done, and here is the total" has to wait for this.
+    onProductDone,
+  } = {}
 ) {
   const targets = products.filter((p) => p.image_url);
   const skipped = products.length - targets.length;
 
+  // Live counters behind the progress bar. Products are searched concurrently
+  // and land one at a time, so without this the whole run is a single unknown
+  // wait that ends either full or empty — and "are there any suppliers?" is
+  // exactly the question the wait is about. `found` counts the rows that will
+  // actually be shown (post site-filter), and keeps counting through the deep
+  // pass so the number never appears to reset.
+  let done = 0;
+  let found = 0;
+
   const settled = await Promise.all(
     targets.map(async (product) => {
       try {
-        return { product, data: await _lookupSuppliers(product, includeContacts) };
+        const data = await _lookupSuppliers(product, includeContacts);
+        // The site picker filters what Lens returned rather than what it
+        // searched: Lens has no per-site query to narrow, so narrowing happens
+        // here. Done up front — the count reported below has to be the count
+        // that reaches the grid.
+        let suppliers = (data.results ?? []).map(lensSupplierRow);
+        if (mfrSites.length) suppliers = suppliers.filter((s) => mfrSites.includes(s.site));
+        done += 1;
+        found += suppliers.length;
+        // `product` and `count` name what just landed, so a caller can mark the
+        // individual product rather than only counting in aggregate.
+        onProgress?.({ phase: "lens", done, total: targets.length, found, product, count: suppliers.length });
+        return { product, data, suppliers };
       } catch (error) {
         if (error.name === "AbortError") throw error;
+        done += 1;
+        onProgress?.({ phase: "lens", done, total: targets.length, found, product, count: 0 });
         return { product, error };
       }
     })
@@ -387,16 +464,35 @@ export async function findSuppliersByImage(
   const groups = [];
   const warnings = [];
   const missed = [];
+  // Products no pass in this call managed to answer — the request threw rather
+  // than coming back empty. The two are not the same thing and must not be
+  // reported as one: "searched, found nothing" is a result, while a captcha'd
+  // browser session or a timed-out request is the absence of one, and only the
+  // second is worth trying again. Returned so a caller can do exactly that.
+  const unresolved = new Set();
+  // Products that DID get supplier rows but are missing a selected site Lens
+  // cannot serve — see LENS_BLIND_SITES. Each carries the sites still to look
+  // for, so the deep search for them queries only those and not the whole list.
+  const uncovered = [];
+  // Lets a deep result be merged into the group the fast path already built for
+  // that product, instead of the same product appearing twice in the grid.
+  const groupFor = new Map();
+  const blindWanted = mfrSites.length
+    ? LENS_BLIND_SITES.filter((s) => mfrSites.includes(s))
+    : [];
   let totalMs = 0;
   if (skipped > 0) {
     warnings.push(`${skipped} product(s) had no photo to search with and were skipped.`);
   }
 
-  for (const { product, data, error } of settled) {
+  for (const { product, data, error, suppliers } of settled) {
     if (error) {
       // A product whose fast search failed outright is still worth the deep
-      // one — the two use different vendors and fail independently.
+      // one — the two use different vendors and fail independently. Held as
+      // unresolved until that pass either answers it or fails too; if no deep
+      // pass runs here, it stays unresolved, which is the truth.
       missed.push(product);
+      unresolved.add(product);
       warnings.push(`[${product.title?.slice(0, 40) ?? "product"}] ${error.message}`);
       continue;
     }
@@ -406,12 +502,32 @@ export async function findSuppliersByImage(
     warnings.push(...(data.warnings ?? []));
     totalMs = Math.max(totalMs, data.latency_ms ?? 0);
 
-    let suppliers = (data.results ?? []).map(lensSupplierRow);
-    // The site picker filters what Lens returned rather than what it searched:
-    // Lens has no per-site query to narrow, so narrowing happens here.
-    if (mfrSites.length) suppliers = suppliers.filter((s) => mfrSites.includes(s.site));
-    if (suppliers.length) groups.push({ product, suppliers });
-    else missed.push(product);
+    if (suppliers.length) {
+      const group = { product, suppliers };
+      groups.push(group);
+      groupFor.set(product, group);
+      // Rows from Lens does not mean rows from every site the user asked for.
+      const have = new Set(suppliers.map((s) => s.site));
+      const absent = blindWanted.filter((s) => !have.has(s));
+      if (absent.length) uncovered.push({ product, sites: absent });
+    } else {
+      missed.push(product);
+    }
+  }
+
+  // Everything the fast pass has finished with. A product being deep-searched
+  // below is deliberately not announced yet — its list isn't whole until that
+  // pass returns, and announcing it twice would mean announcing it wrong once.
+  const perProduct = new Map(settled.map((s) => [s.product, s.suppliers?.length ?? 0]));
+  const stillWorking = new Set(
+    deepFallback && !signal?.aborted
+      ? [...missed, ...uncovered.map((u) => u.product)]
+      : []
+  );
+  if (onProductDone) {
+    for (const { product } of settled) {
+      if (!stillWorking.has(product)) onProductDone(product, perProduct.get(product) ?? 0);
+    }
   }
 
   // `signal` cannot cancel the requests themselves — they are cached and shared,
@@ -432,8 +548,30 @@ export async function findSuppliersByImage(
     // is just a wrong message shown for one frame.
     const pending = missed.filter((p) => _deepPending(p, deepSites));
     if (pending.length) onDeepSearch?.(pending.length);
-    const deep = await searchManufacturers(missed, { mfrSites: deepSites });
-    groups.push(...deep.groups);
+    // The deep pass counts in its own products, not the fast pass's: its label
+    // says how many products fell through to it, so a bar counting the original
+    // basket would read against a total the user was never shown.
+    let deepDone = 0;
+    const deep = await searchManufacturers(missed, {
+      mfrSites: deepSites,
+      onProduct: (count, product) => {
+        deepDone += 1;
+        found += count;
+        onProgress?.({ phase: "deep", done: deepDone, total: missed.length, found, product, count });
+        // This product had nothing from Lens, so the deep search landing is the
+        // last word on it.
+        onProductDone?.(product, count);
+      },
+    });
+    for (const group of deep.groups) {
+      groups.push(group);
+      groupFor.set(group.product, group);
+    }
+    // The deep pass is the last word on these, so it decides their standing:
+    // whatever it answered — rows or none — is resolved, and only what it threw
+    // on stays outstanding.
+    for (const product of missed) unresolved.delete(product);
+    for (const product of deep.failed) unresolved.add(product);
     warnings.push(...deep.warnings);
     warnings.push(
       deep.groups.length
@@ -445,7 +583,67 @@ export async function findSuppliersByImage(
     );
   }
 
-  return { groups, warnings, latencyMs: totalMs };
+  // The same deep search, for products the fast path DID answer but not on
+  // every site the user picked. Runs second so the products with nothing at all
+  // are served first, and asks only for the missing sites — re-driving Alibaba
+  // here would spend minutes re-finding rows Lens already returned in seconds.
+  if (deepFallback && uncovered.length && !signal?.aborted) {
+    // One call per distinct site set keeps the request cacheable by site list,
+    // which is how _lookupDeep is keyed. In practice LENS_BLIND_SITES has one
+    // entry, so this is one call.
+    const bySites = new Map();
+    for (const { product, sites } of uncovered) {
+      const key = sites.join(",");
+      if (!bySites.has(key)) bySites.set(key, { sites, products: [] });
+      bySites.get(key).products.push(product);
+    }
+
+    for (const { sites, products } of bySites.values()) {
+      if (signal?.aborted) break;
+      const pending = products.filter((p) => _deepPending(p, sites));
+      if (pending.length) onDeepSearch?.(pending.length);
+      let deepDone = 0;
+      const deep = await searchManufacturers(products, {
+        mfrSites: sites,
+        onProduct: (count, product) => {
+          deepDone += 1;
+          found += count;
+          onProgress?.({ phase: "deep", done: deepDone, total: products.length, found, product, count });
+          // These already had Lens rows; the blind-site pass adds to them.
+          onProductDone?.(product, (perProduct.get(product) ?? 0) + count);
+        },
+      });
+      // These products already have their Lens rows, so a failure here is a
+      // partial answer rather than none at all — outstanding all the same,
+      // because the site that failed is one the user asked for and Lens cannot
+      // see, so nothing else in this call will ever cover it.
+      for (const product of deep.failed) unresolved.add(product);
+      let added = 0;
+      for (const group of deep.groups) {
+        added += group.suppliers.length;
+        const existing = groupFor.get(group.product);
+        // Merged rather than pushed: the fast path already made a group for
+        // this product, and a second one would show the same product twice in
+        // the grid with its suppliers split across the two.
+        if (existing) existing.suppliers.push(...group.suppliers);
+        else {
+          groups.push(group);
+          groupFor.set(group.product, group);
+        }
+      }
+      warnings.push(...deep.warnings);
+      const names = sites.join(", ");
+      warnings.push(
+        added
+          ? `Google Lens cannot see ${names}, so ${products.length} product(s) were searched ` +
+            `against that site's own image index — ${added} listing(s) found.`
+          : `Google Lens cannot see ${names}. Searching that site's own image index for ` +
+            `${products.length} product(s) found no listing either.`
+      );
+    }
+  }
+
+  return { groups, warnings, latencyMs: totalMs, unresolved: [...unresolved] };
 }
 
 export async function searchByImage(

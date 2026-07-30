@@ -40,14 +40,17 @@ export const PRODUCT_SEARCH_SITES = [...BESTSELLER_SITES, ...COMING_SOON_SITES];
 
 // Manufacturer sources — where the "Search for manufacturers" button pulls
 // supplier listings from, for the products the user picks.
-// The marketplaces Lens Sourcing can return. Taobao is included because Google
-// Lens does surface it, even though only Alibaba and 1688 get enriched with a
-// supplier name, price and MOQ — a Taobao row arrives on Lens data alone and
-// says so on the row rather than being dropped.
+//
+// Exactly the three the backend enriches (lens_suppliers.ENRICH_SITES) and the
+// three the deep search can query (api.js DEEP_SEARCH_SITES): a listing from any
+// of them arrives with a price and MOQ read off the page, not on Lens data
+// alone. Taobao was here and isn't any more — it is a consumer marketplace, the
+// pipeline can't read a price or MOQ off it, and over the 36 searches in the
+// backend's Lens cache it produced a single hit against Made-in-China's 19.
 export const MANUFACTURER_SITES = [
   { id: "alibaba", label: "Alibaba", color: "#ff6a00" },
   { id: "1688", label: "1688", color: "#ff5000" },
-  { id: "taobao", label: "Taobao", color: "#ff4400" },
+  { id: "made_in_china", label: "Made-in-China", color: "#c0111a" },
 ];
 
 // Not a filterable scraper site (so it's kept out of SITES/SiteFilter) — Google

@@ -39,6 +39,7 @@ from urllib.parse import urlparse
 
 import httpx
 
+from . import credentials
 from .config import settings
 
 OXYLABS_REALTIME_URL = "https://realtime.oxylabs.io/v1/queries"
@@ -58,13 +59,14 @@ RETRYABLE_STATUS = {429, 500, 502, 503, 504}
 MAX_RETRIES = 1
 RETRY_BACKOFF_SECONDS = 0.4
 
-# Which Oxylabs source serves each marketplace. 1688 and Taobao have no
-# dedicated target, so they go through `universal`, which is what the docs
-# prescribe for "generic targets which do not have a dedicated source".
+# Which Oxylabs source serves each marketplace. Only Alibaba has a dedicated
+# target; the rest go through `universal`, which is what the docs prescribe for
+# "generic targets which do not have a dedicated source".
 SOURCE_FOR_SITE = {
     "alibaba": "alibaba",
     "1688": "universal",
     "taobao": "universal",
+    "made_in_china": "universal",
 }
 
 # Alibaba localises its prices to the exit IP, and Oxylabs rotates exits
@@ -84,6 +86,12 @@ SOURCE_FOR_SITE = {
 # 1688 and Taobao are deliberately absent. They are domestic Chinese sites that
 # quote CNY natively; a US exit would be the wrong hint there and risks the
 # reachability that currently works.
+#
+# Made-in-China is absent for the opposite reason: it needs no hint. Measured
+# 2026-07-30 on two live product pages fetched with no geo_location, both came
+# back with `"priceCurrency": "USD"` in their JSON-LD. It is an export
+# marketplace that quotes exporters' prices in dollars by default, so there is
+# no rotating-currency problem here to fix and no reason to spend a pinned exit.
 GEO_FOR_SITE: dict[str, str] = {"alibaba": "United States"}
 
 
@@ -102,7 +110,7 @@ class OxylabsAuthError(OxylabsError):
 
 
 def is_configured() -> bool:
-    return bool(settings.oxylabs_username and settings.oxylabs_password)
+    return bool(credentials.OXYLABS)
 
 
 def site_for_url(url: str) -> str | None:
@@ -120,7 +128,16 @@ def site_for_url(url: str) -> str | None:
         return None
     if not host:
         return None
-    for site, domain in (("alibaba", "alibaba.com"), ("1688", "1688.com"), ("taobao", "taobao.com")):
+    for site, domain in (
+        ("alibaba", "alibaba.com"),
+        ("1688", "1688.com"),
+        ("taobao", "taobao.com"),
+        # Made-in-China puts the *supplier* in the subdomain
+        # (`wisdomhouseware.en.made-in-china.com`) as well as the locale
+        # (`fr.`, `m.`), so the suffix test carries more weight here than
+        # elsewhere — there is no fixed host to compare against.
+        ("made_in_china", "made-in-china.com"),
+    ):
         if host == domain or host.endswith("." + domain):
             return site
     return None
@@ -136,10 +153,13 @@ class OxylabsClient:
         timeout: float = PER_URL_TIMEOUT,
         render: bool | None = None,
     ):
-        self._auth = (
-            username or settings.oxylabs_username,
-            password or settings.oxylabs_password,
-        )
+        # One account per client, not per request: `scrape` is called
+        # concurrently on a single client, and an account picked per request
+        # would mean a batch of URLs for one search spread across accounts with
+        # no way to tell which one a 401 came from. A client is created per
+        # request anyway, so the rotation still happens — one step coarser.
+        account = credentials.OXYLABS.next() or ("", "")
+        self._auth = (username or account[0], password or account[1])
         self._timeout = timeout
         self._render = settings.oxylabs_render if render is None else render
 

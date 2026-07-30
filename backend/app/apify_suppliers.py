@@ -32,7 +32,7 @@ from typing import Any, Callable
 
 import httpx
 
-from .config import settings
+from . import credentials
 from .models import Product
 
 APIFY_RUN_URL = "https://api.apify.com/v2/acts/{actor}/run-sync-get-dataset-items"
@@ -45,7 +45,7 @@ MAX_LISTINGS = 40
 
 
 def is_configured() -> bool:
-    return bool(settings.apify_token)
+    return bool(credentials.APIFY)
 
 
 def _num(value: Any, cast: Callable):
@@ -185,6 +185,16 @@ def handles(site: str) -> bool:
     return site in ACTORS and is_configured()
 
 
+def _token() -> str | None:
+    """One account for the whole of one actor run.
+
+    Taken once and threaded through rather than read per request: this is a
+    run-sync call today, but the moment it becomes start-then-poll a second
+    account would be polling for a run that only exists on the first.
+    """
+    return credentials.APIFY.next()
+
+
 async def search(site: str, image_url: str) -> tuple[list[Product], list[str]]:
     """Reverse-image-search one site. Never raises — a dead actor is a warning
     and an empty site, exactly like every other source in this pipeline."""
@@ -199,7 +209,7 @@ async def search(site: str, image_url: str) -> tuple[list[Product], list[str]]:
         async with httpx.AsyncClient(timeout=TIMEOUT_SECONDS) as client:
             response = await client.post(
                 url,
-                params={"token": settings.apify_token, "timeout": int(TIMEOUT_SECONDS) - 20},
+                params={"token": _token(), "timeout": int(TIMEOUT_SECONDS) - 20},
                 json=config.build_input(image_url),
             )
     except httpx.HTTPError as e:

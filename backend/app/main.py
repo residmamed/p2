@@ -4,7 +4,7 @@ from fastapi import Body, FastAPI, File, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-from . import bestsellers, claude_agent, lens_suppliers, sourcing
+from . import bestsellers, claude_agent, credentials, lens_suppliers, sourcing
 from .config import settings
 from .google_lens import GoogleLensError, search_google_lens_products
 from .image_match import match_and_group
@@ -259,8 +259,8 @@ async def find_suppliers(request: FindSuppliersRequest = Body(...)):
     """Photo -> Chinese supplier listings via Google Lens + Oxylabs, no browser.
 
     The fast counterpart to /api/sourcing/image: one SerpApi Lens call for the
-    visual match, then concurrent Oxylabs fetches of each Alibaba/1688 product
-    page for supplier, price and MOQ. Targets under 5s where the sourcing
+    visual match, then concurrent Oxylabs fetches of each Alibaba, 1688 and
+    Made-in-China product page for supplier, price and MOQ. Targets under 5s where the sourcing
     pipeline takes minutes; in exchange it only finds what Lens has indexed, and
     labels every row `lens_*_match` because nothing here compares the two
     products. See app/lens_suppliers.py.
@@ -319,4 +319,9 @@ async def best_sellers_more(
 
 @app.get("/api/health")
 async def health():
-    return {"status": "ok"}
+    # How many accounts each metered vendor has. The counts, never the keys —
+    # this endpoint is unauthenticated. Worth exposing because a second account
+    # that silently failed to load looks exactly like one that is working: the
+    # pipeline still answers, just at the old ceiling, and nothing anywhere else
+    # says which. See app/credentials.py.
+    return {"status": "ok", "accounts": credentials.summary()}

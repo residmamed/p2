@@ -2,6 +2,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import SiteFilter from "./SiteFilter";
 import ProductCard from "./ProductCard";
 import ProgressBar from "./ProgressBar";
+import SearchTicker from "./SearchTicker";
+import PrefetchRing from "./PrefetchRing";
 import ImageCropper from "./ImageCropper";
 import MarketSnapshot from "./MarketSnapshot";
 import ResultsToolbar, { applyResultFilters, DEFAULT_FILTERS } from "./ResultsToolbar";
@@ -13,7 +15,7 @@ import { PRODUCT_SEARCH_SITES, MANUFACTURER_SITES, SITE_LABELS, SITE_COLORS } fr
 import { useI18n } from "../i18n";
 import { useRecentSearches, RUN_SEARCH_EVENT } from "../store";
 import { userWarnings } from "../warnings";
-import { splitSuppliers, SUPPLIERS_SHOWN } from "../supplierFilter";
+import { splitSuppliers } from "../supplierFilter";
 
 function isAbortError(e) {
   return e?.name === "AbortError";
@@ -99,6 +101,15 @@ function MailIcon() {
     <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       <rect x="2" y="4" width="20" height="16" rx="2" />
       <path d="m22 7-10 6L2 7" />
+    </svg>
+  );
+}
+
+// Marks the listing title as leaving the app for the marketplace.
+function ExternalIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5" />
     </svg>
   );
 }
@@ -329,7 +340,10 @@ function MessageModal({ recipients, onClose, onSent, t }) {
             <div className="msg-recipients">
               {resolved.map(({ r, ch }) => (
                 <span key={r._key} className={`msg-chip ${ch.kind === "none" ? "msg-chip-off" : ""}`}>
-                  <span className="msg-chip-name">{r.seller_name}</span>
+                  {/* The listing, not the company — the same thing the grid
+                      rows show, so a recipient chip can be matched back to the
+                      row it came from. */}
+                  <span className="msg-chip-name">{r.title || SITE_LABELS[r.site] || r.site}</span>
                   <span className={`msg-chip-ch msg-chip-ch-${ch.kind}`}>
                     {ch.kind === "none" ? <StoreIcon /> : CHANNEL_ICON[ch.kind]}
                     {ch.kind === "platform"
@@ -403,19 +417,40 @@ function CameraIcon() {
   );
 }
 
-// How many products the automatic post-search supplier lookup covers. Every
-// product costs one Google Lens lookup against a metered quota, and a store
-// search can return 100 — so the run that nobody clicked stays bounded to the
-// top of the grid, and the button covers the rest on demand.
-const AUTO_SUPPLIER_MAX = 12;
+// How the two prefetch passes divide the corner ring. Both passes now cover
+// every product, but the fast Lens one takes seconds where the deep marketplace
+// one takes minutes. Splitting the ring evenly would race it to near-full in the
+// first few seconds and then leave it apparently stuck for the rest of the run,
+// which is the opposite of what it's for.
+const FAST_SHARE = 0.25;
 
-// How many of those the automatic run follows through to the deep marketplace
-// search when Lens came back empty. Much smaller, and searched one product at a
-// time: a single deep search already drives three browser sessions at once
-// (sourcing.py's DISCOVERY_CONCURRENCY), so twelve at once would be thirty-six
-// and Browserbase would refuse most of them. Sequential means the unasked-for
-// run never takes more sessions than one press of the button does.
-const AUTO_DEEP_MAX = 6;
+// How many products the background deep pass searches at once.
+//
+// It used to be one, on the belief that a deep search holds three cloud browsers
+// for its three sites. On the by-URL path this endpoint actually takes, Alibaba
+// and 1688 go to Apify actors and open no browser at all — only Made-in-China
+// drives one. So the normal cost is ONE Browserbase session per product, and
+// three only in the worst case, when both Apify actors come back empty and fall
+// back to the browser upload.
+//
+// Sized against a Browserbase Developer plan (25 concurrent). Six products is
+// six sessions normally and eighteen at the worst, leaving headroom under 25 —
+// and going over does not queue, the session create fails outright, which is
+// why this is deliberately short of the cap rather than at it. On a Free plan
+// (3 concurrent) this must be 1.
+const PREFETCH_PARALLEL = 6;
+
+// How many times the background run comes back to a product whose search threw
+// rather than answering, and how long it waits before each retry.
+//
+// The failures worth retrying are the transient ones — a captcha'd browser
+// session, a Browserbase session refused because the plan's three were busy, a
+// timeout — and those clear on their own given a moment, which is what the wait
+// is for. Bounded because some failures are permanent (a photo URL the supplier
+// sites won't accept), and an unbounded retry on one of those is an infinite
+// loop that bills for every turn of it.
+const PREFETCH_ROUNDS = 4;
+const PREFETCH_RETRY_MS = 15000;
 
 export default function BestSellersView() {
   const { t } = useI18n();
@@ -443,6 +478,20 @@ export default function BestSellersView() {
   // How many products fell through to the slow marketplace search, so the
   // progress bar can say so instead of sitting at 100%.
   const [deepSearching, setDeepSearching] = useState(0);
+  // Real supplier-search progress: { phase, done, total, found }. Each product
+  // is its own request and they land separately, so this is a count and not an
+  // estimate — including `found`, which is the question the wait is about.
+  const [mfrProgress, setMfrProgress] = useState(null);
+  // The background supplier prefetch, for the corner ring: { pct, found, ready }.
+  // Null until a product search finishes and the prefetch starts.
+  const [prefetch, setPrefetch] = useState(null);
+  const [prefetchHidden, setPrefetchHidden] = useState(false);
+  // Per product, how many supplier listings have been found for it so far:
+  // { [productKey]: { lens, deep } }. Fed by the background prefetch and by the
+  // supplier search alike, which is why the two passes are recorded separately
+  // and by max — both report the same product more than once (the second run
+  // answers from cache), and adding those up would inflate the count.
+  const [supplierHits, setSupplierHits] = useState({});
   const [mfrSites, setMfrSites] = useState(MANUFACTURER_SITES.map((s) => s.id));
   // Per-store "find more" status, keyed by site id:
   // { loading?, exhausted?, added?, error? }. Reset on every new search.
@@ -451,9 +500,6 @@ export default function BestSellersView() {
   // Suppliers checked for messaging (keyed `${productId}-${index}`) + modal.
   const [checkedSuppliers, setCheckedSuppliers] = useState(() => new Set());
   const [messageOpen, setMessageOpen] = useState(false);
-  // Which product groups the user has pressed "More" on. Per group, not global:
-  // expanding one product's suppliers shouldn't flood every other product's.
-  const [expandedGroups, setExpandedGroups] = useState(() => new Set());
 
   // Workbench state: refine/sort filters.
   const [filters, setFilters] = useState(DEFAULT_FILTERS);
@@ -510,6 +556,11 @@ export default function BestSellersView() {
     setMfrWarnings([]);
     setLensMode(null);
     setMoreState({}); // a store that was exhausted for the last query isn't for this one
+    // The previous run's prefetch is about to be aborted and its results
+    // dropped, so its ring must not carry a "ready" over into this search.
+    setPrefetch(null);
+    setPrefetchHidden(false);
+    setSupplierHits({});
     setFilters(DEFAULT_FILTERS); // stale refinements don't apply to a new set
     // The previous query's prefetched suppliers are for products that are about
     // to leave the screen. Dropped rather than carried, so the cache only ever
@@ -611,6 +662,28 @@ export default function BestSellersView() {
     return product.product_url || product.id;
   }
 
+  // Record a product's FINAL supplier count — only ever called from
+  // onProductDone, never from a pass still in flight, so the mark on a card
+  // means "we finished looking for this item" and the number behind it is the
+  // whole list rather than however much of it had arrived.
+  //
+  // Each report replaces the last rather than accumulating: the same product is
+  // reported by the prefetch and again by the search the user runs, and a later
+  // report is simply the better answer — including when it is zero, which is
+  // what a re-run against a narrower set of marketplaces should produce.
+  function noteSupplierHit(product, count) {
+    const key = product && productKey(product);
+    if (!key) return;
+    setSupplierHits((prev) => {
+      if ((prev[key] ?? 0) === count) return prev;
+      const next = { ...prev };
+      if (count > 0) next[key] = count;
+      else delete next[key];
+      return next;
+    });
+  }
+  const supplierHitCount = (product) => supplierHits[productKey(product)] ?? 0;
+
   function toggleSelect(product) {
     const key = productKey(product);
     if (!key) return;
@@ -634,16 +707,50 @@ export default function BestSellersView() {
   // click below either finds the answer already there or joins a request already
   // in flight, instead of starting from nothing.
   //
-  // Capped, because each product costs a Google Lens lookup against a metered
-  // quota and a store search returns up to 100. The cap is on what's prefetched
-  // only — the button still searches whatever the user selected, and the rows
-  // beyond the cap are simply fetched then rather than now.
+  // Every product in the grid, through both passes. It used to cover only the
+  // top twelve, and only the top six of those through the deep pass — which made
+  // the button's whole purpose "finish the prefetch's work in the foreground",
+  // and, worse, put the finished-looking mark on products whose deep search had
+  // never been run. A press then went straight into the slow marketplace pass
+  // for exactly the items the grid had already called done. The unasked-for run
+  // costs a Lens lookup and a set of browser sessions per product, so this is
+  // the expensive choice; it is also the only one where the mark means what it
+  // says and the button has nothing left to do.
   async function prefetchSuppliers(list) {
     if (!list.length || !mfrSites.length) return;
     prefetchAbortRef.current?.abort();
     const controller = new AbortController();
     prefetchAbortRef.current = controller;
-    const targets = list.slice(0, AUTO_SUPPLIER_MAX);
+    const targets = list;
+
+    // One fraction across both passes, for the corner ring. The prefetch stays
+    // silent in every other respect — no results, no warnings, nothing moves on
+    // the page — but "has the wait already been paid?" is worth answering
+    // without making the user press the button to find out.
+    //
+    // The running total is held per product and summed, rather than accumulated
+    // as each report lands. A product can be searched more than once here — that
+    // is what the retry rounds below are — and its second pass answers from
+    // cache with the same rows the first one found, so anything that added as it
+    // went would count those rows twice and report a supplier count that grew
+    // with the failures rather than with the findings.
+    const counts = new Map();
+    const totalFound = () => {
+      let n = 0;
+      for (const c of counts.values()) n += c;
+      return n;
+    };
+    const report = (fastDone, deepDone, ready = false) => {
+      if (controller.signal.aborted) return;
+      const fast = fastDone / targets.length;
+      const deep = deepDone / targets.length;
+      setPrefetch({
+        pct: 100 * (FAST_SHARE * fast + (1 - FAST_SHARE) * deep),
+        found: totalFound(),
+        ready,
+      });
+    };
+    report(0, 0);
 
     // Fast Lens pass first, all products at once — it is cheap and quick, and it
     // decides which products even need the slow pass.
@@ -651,10 +758,21 @@ export default function BestSellersView() {
     // Nothing is done with the result: it lives in api.js's cache, which is the
     // entire purpose. Failures are swallowed for the same reason — a prefetch
     // that fails must be invisible, and the click will retry it.
+    let fastDone = 0;
     await findSuppliersByImage(targets, {
       mfrSites,
       signal: controller.signal,
       deepFallback: false,
+      onProgress: (p) => {
+        fastDone = p.done;
+        if (p.product) counts.set(productKey(p.product), p.count);
+        report(fastDone, 0);
+      },
+      // Deliberately no onProductDone. This call runs no deep pass, so as far as
+      // IT is concerned every product is finished — but the loop below is still
+      // to come for all of them and can add to any. Marking a card here would
+      // put the "suppliers found" dot on a product whose search is half done,
+      // which is the one thing the dot must never mean.
     }).catch(() => {});
     if (controller.signal.aborted) return;
 
@@ -666,21 +784,84 @@ export default function BestSellersView() {
     // reporting. Starting it as soon as the products land means it is normally
     // finished, or well under way, before anyone presses anything.
     //
-    // One product per call so the searches run in series, and so a product Lens
-    // already answered costs nothing here: its fast result is cached, this call
-    // finds suppliers for it, and no deep search is triggered.
-    for (const product of targets.slice(0, AUTO_DEEP_MAX)) {
-      // A new product search aborts this loop between products. It cannot cancel
-      // a deep search already in flight — that request is shared through the
-      // cache, so it carries no caller's signal — which bounds the waste to the
-      // one product being searched when the user moved on.
+    // One product per call, PREFETCH_PARALLEL of them in flight — a call per
+    // product because a product Lens already answered then costs nothing here
+    // (its fast result is cached, this call finds suppliers for it, and no deep
+    // search is triggered), and a bounded number in flight because the ceiling
+    // is the Browserbase plan's concurrent-browser cap.
+    //
+    // The run does not end at the bottom of the list — it ends when every
+    // product has an answer. A search that threw is not one: a captcha'd session
+    // or a refused browser tells us nothing about whether the product has
+    // suppliers, and a product left in that state sits in the grid looking
+    // exactly like one that was searched properly and came back empty. So the
+    // products that failed are gathered up and gone round again.
+    //
+    // "Searched, found nothing" is not a failure and is never retried. It is a
+    // real answer, the request would be identical, and the only thing a second
+    // attempt would reliably produce is a second bill.
+    let deepDone = 0;
+    let pending = targets;
+    for (let round = 0; pending.length && round < PREFETCH_ROUNDS; round += 1) {
+      if (round) {
+        // A beat before trying again. What makes these searches fail is mostly
+        // contention — Browserbase allows three concurrent sessions and one deep
+        // search uses all three — so retrying the instant it failed mostly buys
+        // the same failure.
+        await new Promise((resolve) => setTimeout(resolve, PREFETCH_RETRY_MS));
+        if (controller.signal.aborted) return;
+      }
+      const outstanding = [];
+      // A shared cursor rather than a chunked Promise.all: chunks move at the
+      // pace of their slowest member and leave the rest of the workers idle at
+      // every boundary, and these searches differ by minutes. Each worker takes
+      // the next product the moment it is free, so the plan's browsers stay
+      // busy until there is genuinely nothing left to search.
+      //
+      // `cursor++` needs no lock — JS runs this synchronously between awaits, so
+      // two workers cannot read the same index.
+      let cursor = 0;
+      const worker = async () => {
+        while (cursor < pending.length) {
+          // A new product search aborts the run here. It cannot cancel a deep
+          // search already in flight — that request is shared through the
+          // cache, so it carries no caller's signal — which bounds the waste to
+          // the products being searched when the user moved on.
+          if (controller.signal.aborted) return;
+          const product = pending[cursor++];
+          const data = await findSuppliersByImage([product], {
+            mfrSites,
+            signal: controller.signal,
+            deepFallback: true,
+            // This product's last pass — mark its card now, with the whole list.
+            onProductDone: (prod, count) => {
+              counts.set(productKey(prod), count);
+              noteSupplierHit(prod, count);
+              report(fastDone, deepDone);
+            },
+          }).catch(() => null);
+          if (controller.signal.aborted) return;
+          // Nothing usable came back, so the product is not done and the ring
+          // must not count it. It goes into the next round instead.
+          if (!data || data.unresolved.length) {
+            outstanding.push(product);
+            continue;
+          }
+          deepDone += 1;
+          report(fastDone, deepDone);
+        }
+      };
+      await Promise.all(
+        Array.from({ length: Math.min(PREFETCH_PARALLEL, pending.length) }, worker)
+      );
       if (controller.signal.aborted) return;
-      await findSuppliersByImage([product], {
-        mfrSites,
-        signal: controller.signal,
-        deepFallback: true,
-      }).catch(() => {});
+      pending = outstanding;
     }
+    // `deepDone` and not targets.length: if a product defeated every round, the
+    // ring stops short of full and says so. Claiming 100% here would put the
+    // finished mark on a run that never finished — the exact thing the retries
+    // exist to prevent.
+    report(fastDone, deepDone, true);
   }
 
   async function handleFindManufacturers() {
@@ -698,8 +879,8 @@ export default function BestSellersView() {
     setMfrWarnings([]);
     setMfrLatency(null);
     setDeepSearching(0);
+    setMfrProgress(null);
     setMfrGroups(null); // clear previous results so only the progress bar shows
-    setExpandedGroups(new Set());
     setCheckedSuppliers(new Set());
     // Jump straight down to the manufacturer section (progress bar) on click.
     requestAnimationFrame(() =>
@@ -721,6 +902,15 @@ export default function BestSellersView() {
         // often has no Chinese B2B listing at all. Those products fall through
         // to the marketplaces' own image indexes rather than showing nothing.
         onDeepSearch: (n) => setDeepSearching(n),
+        // Fires as each product's search lands. A cancelled run is left alone —
+        // cached lookups aren't tied to this controller and resolve after Stop,
+        // which would otherwise tick a bar that is no longer on screen.
+        onProgress: (p) => {
+          if (!controller.signal.aborted) setMfrProgress(p);
+        },
+        onProductDone: (product, count) => {
+          if (!controller.signal.aborted) noteSupplierHit(product, count);
+        },
       });
       // Cached lookups are shared and so aren't tied to this controller — they
       // resolve even after Stop. Checked explicitly, or a cancelled search would
@@ -742,12 +932,31 @@ export default function BestSellersView() {
     ? t("findMfrSelected", selectedProducts.length)
     : t("findMfrAll", products.length);
 
+  // What the supplier progress bar shows. The two passes count different things
+  // — the fast one counts the basket, the slow one counts only what fell
+  // through to it — so a report is used only while its own pass is the one being
+  // labelled. In the gap between the label switching and the first slow product
+  // landing there is nothing real to show yet, and the bar falls back to its
+  // time estimate rather than pairing one pass's counts with the other's words.
+  const mfrPhase = deepSearching ? "deep" : "lens";
+  const mfrLive = mfrProgress?.phase === mfrPhase ? mfrProgress : null;
+  const mfrPct = mfrLive?.total ? (mfrLive.done / mfrLive.total) * 100 : null;
+  const mfrDetail = !mfrLive
+    ? null
+    : mfrPhase === "deep"
+    ? t("supplierProgressDeep", mfrLive.done, mfrLive.total, mfrLive.found)
+    : mfrLive.found
+    ? t("supplierProgress", mfrLive.done, mfrLive.total, mfrLive.found)
+    // Zero is a real answer and worth saying plainly — "0 suppliers found" next
+    // to a moving bar reads as a bar that hasn't got there yet.
+    : t("supplierProgressNone", mfrLive.done, mfrLive.total);
+
   const supplierKey = (productId, i) => `${productId}-${i}`;
 
-  // What the grid actually shows: per product, only the suppliers something
-  // vouched for as selling this product, capped at SUPPLIERS_SHOWN until the
-  // user asks for more. `splitSuppliers` falls back to the unfiltered list when
-  // nothing could be confirmed, so this can narrow a group but never empty one.
+  // What the grid actually shows: per product, only the listings something
+  // vouched for as selling this product. `splitSuppliers` falls back to the
+  // unfiltered list when nothing could be confirmed, so this can narrow a group
+  // but never empty one.
   const mfrView = useMemo(() => {
     if (!mfrGroups) return null;
     return mfrGroups.map((group) => {
@@ -761,20 +970,10 @@ export default function BestSellersView() {
     });
   }, [mfrGroups]);
 
-  const visibleSuppliers = (group) => {
-    const expanded = expandedGroups.has(productKey(group.product));
-    return expanded ? group.suppliers : group.suppliers.slice(0, SUPPLIERS_SHOWN);
-  };
-
-  function toggleExpanded(group) {
-    const key = productKey(group.product);
-    setExpandedGroups((prev) => {
-      const next = new Set(prev);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
-      return next;
-    });
-  }
+  // Every supplier found for a product, all of them, always. There was a cap of
+  // five behind a "More" button; a sourcing list that hides rows by default
+  // hides the cheapest one just as easily as the fifteenth.
+  const visibleSuppliers = (group) => group.suppliers;
 
   // Flat list of every listed supplier with a stable selection key + product ref.
   const allSuppliers = (mfrView || []).flatMap((g) =>
@@ -957,6 +1156,11 @@ export default function BestSellersView() {
             label={searchMode === "lens" ? t("bestSearchingLens") : t("bestSearching")}
             durationMs={searchMode === "lens" ? 120000 : PRODUCT_SEARCH_MS}
           />
+          {/* The stores being searched, scrolling past. One request covers all
+              of them, so there is no per-store progress to report — but naming
+              them is honest about where the wait is going, and gives the half
+              minute something to watch. */}
+          <SearchTicker sites={sites} variant={searchMode === "lens" ? "lens" : "product"} />
           <div className="stop-row">
             <button type="button" className="secondary-button" onClick={handleStop}>
               {t("stopSearch")}
@@ -1030,6 +1234,7 @@ export default function BestSellersView() {
                   selectable
                   selected={selectedIds.has(productKey(product))}
                   onToggleSelect={toggleSelect}
+                  supplierCount={supplierHitCount(product)}
                 />
               ))}
             </div>
@@ -1075,8 +1280,11 @@ export default function BestSellersView() {
           <ProgressBar
             label={deepSearching ? t("deepSearching", deepSearching) : t("findMfrSearching")}
             durationMs={deepSearching ? MFR_SEARCH_MS : LENS_SOURCING_MS}
+            value={mfrPct}
+            detail={mfrDetail}
             key={deepSearching ? "deep" : "fast"}
           />
+          <SearchTicker sites={mfrSites} variant="supplier" />
           <div className="stop-row">
             <button type="button" className="secondary-button" onClick={handleStop}>
               {t("stopSearch")}
@@ -1113,14 +1321,17 @@ export default function BestSellersView() {
               className="secondary-button"
               onClick={() =>
                 exportProductsToExcel(
-                  // Each row = one supplier offer, carrying the real PRODUCT
-                  // image + name so the export includes pictures.
+                  // Each row = one listing, carrying the retail product's photo
+                  // so the export has pictures, but the listing's OWN title and
+                  // URL: every row used to link back to the retail product it
+                  // was found from, which is the one link the reader already has.
                   mfrView.flatMap((g) =>
                     g.suppliers.map((s) => ({
                       ...s,
                       image_url: g.product.image_url,
-                      title: g.product.title,
-                      product_url: g.product.product_url,
+                      title: s.title || g.product.title,
+                      product_url: s.product_url,
+                      _sourceProduct: g.product.title,
                     }))
                   ),
                   "manufacturers.xlsx"
@@ -1180,7 +1391,7 @@ export default function BestSellersView() {
                   </span>
                   <span>{t("colSource")}</span>
                   <span>{t("colMatch")}</span>
-                  <span>{t("colCompany")}</span>
+                  <span>{t("colListing")}</span>
                   <span>{t("colRating")}</span>
                   <span>{t("colPrice")}</span>
                   <span>{t("colMoq")}</span>
@@ -1196,7 +1407,7 @@ export default function BestSellersView() {
                         className="mfr-checkbox"
                         checked={checked}
                         onChange={() => toggleSupplier(key)}
-                        aria-label={t("selectSupplier", s.seller_name)}
+                        aria-label={t("selectSupplier", s.title || SITE_LABELS[s.site] || s.site)}
                       />
                     </span>
                     <span>
@@ -1206,43 +1417,35 @@ export default function BestSellersView() {
                     </span>
                     <MatchBadge supplier={s} t={t} />
                     <span className="mfr-company">
-                      {/* The company name links to the supplier's own page
-                          when the listing published one. No link is rendered
-                          when it didn't — a name that looks clickable and
-                          isn't is worse than a plain one, and the URL is
-                          never guessed at from the company's name. */}
-                      {s.seller_url ? (
+                      {/* The listing itself, on the marketplace that hosts it —
+                          the thing to open. Company names are deliberately not
+                          shown: what this table is for is finding the product on
+                          Alibaba / 1688 / Made-in-China, and the name behind a
+                          listing is read by enrichment that often can't get one,
+                          so it made half the rows look emptier than they are. */}
+                      {s.product_url ? (
                         <a
-                          className="mfr-company-name mfr-company-link"
-                          href={s.seller_url}
+                          className="mfr-listing"
+                          href={s.product_url}
                           target="_blank"
                           rel="noreferrer"
-                          title={t("openSupplierSite")}
+                          title={t("openListingOn", SITE_LABELS[s.site] || s.site)}
                         >
-                          {s.seller_name}
+                          <span className="mfr-listing-title">
+                            {s.title || t("openListingOn", SITE_LABELS[s.site] || s.site)}
+                          </span>
+                          <ExternalIcon />
                         </a>
                       ) : (
-                        <span className="mfr-company-name">{s.seller_name}</span>
+                        // Nothing to open. Said plainly rather than rendered as
+                        // a dead link — the URL is never guessed at.
+                        <span className="mfr-listing-title">{s.title || t("listingNoLink")}</span>
                       )}
                       {s.email && (
                         <a className="mfr-email" href={`mailto:${s.email}`}>
                           <MailIcon />
                           {s.email}
                         </a>
-                      )}
-                      {/* Business type, years and the named contact are what
-                          these marketplaces actually publish — show them
-                          rather than leaving the cell to a name alone. */}
-                      {(s.contact_name || s.business_type || s.years_active) && (
-                        <span className="mfr-company-meta">
-                          {[
-                            s.contact_name,
-                            s.business_type,
-                            s.years_active ? t("yearsOnPlatform", s.years_active) : null,
-                          ]
-                            .filter(Boolean)
-                            .join(" · ")}
-                        </span>
                       )}
                     </span>
                     {/* No phone column. Supplier phone numbers are not
@@ -1256,20 +1459,21 @@ export default function BestSellersView() {
                 })}
               </div>
 
-              {group.suppliers.length > SUPPLIERS_SHOWN && (
-                <button
-                  type="button"
-                  className="secondary-button mfr-more-button"
-                  onClick={() => toggleExpanded(group)}
-                >
-                  {expandedGroups.has(productKey(group.product))
-                    ? t("showFewerSuppliers", SUPPLIERS_SHOWN)
-                    : t("showMoreSuppliers", group.suppliers.length - SUPPLIERS_SHOWN)}
-                </button>
-              )}
             </div>
           ))}
         </div>
+      )}
+
+      {/* Hidden the moment the supplier search itself runs: from then on the
+          real progress bar and the results say everything this did, and two
+          progress indicators for one job is one too many. */}
+      {prefetch && !prefetchHidden && !mfrLoading && !mfrGroups && (
+        <PrefetchRing
+          pct={prefetch.pct}
+          found={prefetch.found}
+          ready={prefetch.ready}
+          onDismiss={() => setPrefetchHidden(true)}
+        />
       )}
 
       {messageOpen && (

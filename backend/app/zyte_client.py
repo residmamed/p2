@@ -3,7 +3,7 @@ import base64
 
 import httpx
 
-from .config import settings
+from . import credentials
 
 ZYTE_EXTRACT_URL = "https://api.zyte.com/v1/extract"
 # 520 is Zyte's "website ban" — the target site refused *that* attempt. Retrying
@@ -26,7 +26,12 @@ class ZyteError(Exception):
 
 class ZyteClient:
     def __init__(self, api_key: str | None = None, timeout: float = 90.0):
-        self._auth = (api_key or settings.zyte_api_key, "")
+        # One account per client rather than per call. A client is built per
+        # request and then used for a burst of concurrent extractions
+        # (PRODUCT_PAGE_CONCURRENCY is 24), so this still spreads the load —
+        # and it keeps one request's burst on one account, which is what makes
+        # a rate-limit response attributable to an account rather than a mystery.
+        self._auth = (api_key or credentials.ZYTE.next() or "", "")
         self._timeout = timeout
 
     async def extract(

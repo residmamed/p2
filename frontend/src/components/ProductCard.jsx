@@ -78,7 +78,17 @@ function SellerRow({ seller, t, hideContact }) {
   );
 }
 
-export default function ProductCard({ product, selectable = false, selected = false, onToggleSelect }) {
+export default function ProductCard({
+  product,
+  selectable = false,
+  selected = false,
+  onToggleSelect,
+  // How many supplier listings have been found for this product so far. Zero
+  // (the default) renders nothing at all — an absent mark must not be readable
+  // as "none found", because for most of a run it only means "not looked at
+  // yet". See the mark itself below.
+  supplierCount = 0,
+}) {
   const { t } = useI18n();
   const sellers = product.sellers || [];
   const hasMultipleSellers = sellers.length > 1;
@@ -120,6 +130,18 @@ export default function ProductCard({ product, selectable = false, selected = fa
               ? t("exactMatch")
               : `${Math.round(product.image_match * 100)}% ${t("match")}`}
           </span>
+        )}
+        {/* Suppliers have been found for this one. A dot and nothing more: it
+            is a quiet aside to someone scanning the grid, not a claim the card
+            is making — the count and the listings themselves are one click
+            away in the supplier table. Hover gives the number. */}
+        {supplierCount > 0 && (
+          <span
+            className="supplier-mark"
+            role="img"
+            aria-label={t("supplierMark", supplierCount)}
+            title={t("supplierMark", supplierCount)}
+          />
         )}
       </a>
       <div className="product-body">

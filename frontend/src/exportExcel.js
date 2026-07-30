@@ -44,9 +44,14 @@ export async function exportProductsToExcel(products, filename = "products.xlsx"
   // No phone column: supplier phone numbers aren't shown in the UI, and an
   // export that carried them would put back on a spreadsheet exactly what was
   // taken off the screen.
+  //
+  // The link column is the one that makes a supplier export usable — a row
+  // naming a price and an MOQ, with no way back to the listing that quoted
+  // them, can't be acted on or checked.
   sheet.columns = [
     { header: "Image", key: "image", width: 18 },
     { header: "Name", key: "name", width: 50 },
+    { header: "Link", key: "link", width: 46 },
     { header: "Company", key: "seller", width: 34 },
     { header: "Price", key: "price", width: 18 },
     { header: "MOQ", key: "moq", width: 16 },
@@ -59,11 +64,20 @@ export async function exportProductsToExcel(products, filename = "products.xlsx"
     const rowNumber = i + 2;
     const row = sheet.addRow({
       name: product.title || "",
+      link: product.product_url || "",
       seller: sellerLabel(product),
       price: product.price_text || "",
       moq: product.moq || "",
     });
     row.height = ROW_HEIGHT;
+
+    // A real hyperlink, so the cell opens the listing on click rather than
+    // making the reader copy a URL out of a spreadsheet.
+    if (product.product_url) {
+      const cell = row.getCell("link");
+      cell.value = { text: product.product_url, hyperlink: product.product_url };
+      cell.font = { color: { argb: "FF0563C1" }, underline: true };
+    }
 
     const imageData = images[i];
     if (imageData) {
