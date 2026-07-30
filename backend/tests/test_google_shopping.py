@@ -54,6 +54,39 @@ def test_the_head_noun_is_required_not_just_the_qualifiers():
     assert describes("stainless steel water bottle", "Owala Stainless Steel Water Bottle")
 
 
+@pytest.mark.parametrize(
+    "query,title",
+    [
+        # The "-es" plural class. Every one of these returned nothing before
+        # _variants() generated plurals in both directions: a singular query
+        # could never reach its own plural, so the head-noun gate dropped the
+        # whole category and the warning blamed the source imagery.
+        ("wine glass", "Crystal Wine Glasses, Set of 4"),
+        ("serving dish", "Ceramic Serving Dishes with Lids"),
+        ("storage box", "Fabric Storage Boxes for Closet"),
+        ("cleaning brush", "Kitchen Cleaning Brushes, 3 Pack"),
+        # ...and the reverse direction, plural query against a singular title.
+        ("wine glasses", "Crystal Wine Glass"),
+        ("storage boxes", "Fabric Storage Box"),
+    ],
+)
+def test_sibilant_plurals_match_in_both_directions(query, title):
+    assert describes(query, title)
+
+
+@pytest.mark.parametrize(
+    "query,title",
+    [
+        ("wine glass", "Office Chair"),
+        ("storage box", "Desk Lamp"),
+        ("cleaning brush", "Ceramic Serving Dishes"),
+    ],
+)
+def test_widening_the_plural_rule_did_not_open_the_gate(query, title):
+    """The controls: the gate still has to reject unrelated products."""
+    assert not describes(query, title)
+
+
 def test_a_keyword_of_only_stopwords_gates_nothing():
     """A gate with nothing to compare against must not silently empty the grid."""
     assert describes("the best", "Literally Anything At All")

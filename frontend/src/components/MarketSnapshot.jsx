@@ -82,6 +82,17 @@ export default function MarketSnapshot({ products }) {
               {snapshot.avgRating != null ? `★ ${snapshot.avgRating.toFixed(1)}` : "—"}
             </KpiTile>
             <KpiTile label={t("msTotalReviews")}>{formatCompact(snapshot.totalReviews)}</KpiTile>
+            {/* Only rendered when some listing actually stated a size. The
+                count it is based on rides along, because a median over 3 of 42
+                listings is a different claim from one over all 42. */}
+            {snapshot.perOzCount > 0 && (
+              <KpiTile label={t("msPerOz")}>
+                ${snapshot.medianPerOz.toFixed(2)}
+                <span className="ms-tile-sub">
+                  {t("msPerOzOf").replace("{n}", String(snapshot.perOzCount))}
+                </span>
+              </KpiTile>
+            )}
             <KpiTile label={t("msCompetition")}>
               <span
                 className={`ms-chip ms-chip-${snapshot.competition}`}

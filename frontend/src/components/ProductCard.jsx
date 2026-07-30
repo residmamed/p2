@@ -1,5 +1,6 @@
 import { SITE_LABELS, SITE_COLORS, isLensSite, isRetailSite } from "../sites";
 import { useI18n } from "../i18n";
+import ProductMetrics from "./ProductMetrics";
 
 function renderContact(product, t) {
   const { contact_type, contact_value } = product;
@@ -78,7 +79,18 @@ function SellerRow({ seller, t, hideContact }) {
   );
 }
 
-export default function ProductCard({ product, selectable = false, selected = false, onToggleSelect }) {
+export default function ProductCard({
+  product,
+  selectable = false,
+  selected = false,
+  onToggleSelect,
+  // Opportunity Score + components for this listing, computed across the whole
+  // result set by the grid (the score is cohort-relative, so a card cannot
+  // derive its own). `null` means scored-and-unscoreable; `undefined` means the
+  // caller doesn't show metrics at all — the two render differently.
+  metrics,
+  showMetrics = false,
+}) {
   const { t } = useI18n();
   const sellers = product.sellers || [];
   const hasMultipleSellers = sellers.length > 1;
@@ -145,6 +157,7 @@ export default function ProductCard({ product, selectable = false, selected = fa
             <Rating product={product} />
           </div>
         )}
+        {showMetrics && isRetail && <ProductMetrics product={product} metrics={metrics} />}
         {hasMultipleSellers ? (
           <div className="product-sellers">
             <div className="product-sellers-heading">{t("availableFrom", sellers.length)}</div>
