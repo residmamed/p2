@@ -2,6 +2,7 @@ import { useState } from "react";
 import "./App.css";
 import SearchView from "./components/SearchView";
 import TrendingView from "./components/TrendingView";
+import WinningProductsView from "./components/WinningProductsView";
 import BestSellersView from "./components/BestSellersView";
 import CommandPalette from "./components/CommandPalette";
 import { I18nProvider, LANGUAGES, useI18n } from "./i18n";
@@ -19,6 +20,7 @@ function AppShell() {
   // revert; add { id: "search", label: t("navSearch") } back to re-enable.
   const TABS = [
     { id: "bestsellers", label: t("navBestSellers") },
+    { id: "winning", label: t("navWinning") },
     { id: "trending", label: t("navTrending") },
   ];
 
@@ -98,6 +100,7 @@ function AppShell() {
 
       {tab === "search" && <SearchView />}
       {tab === "bestsellers" && <BestSellersView />}
+      {tab === "winning" && <WinningProductsView />}
       {tab === "trending" && (
         <div className="page">
           <TrendingView />

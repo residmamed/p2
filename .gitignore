@@ -22,3 +22,10 @@ backend/.cache/
 # CLIP's ViT-B-32.pt is 338 MB — past GitHub's hard 100 MB per-file limit, so
 # it cannot be pushed without Git LFS. Downloaded on first run.
 backend/weights/
+
+# The Winning Products snapshot archive (app/snapshot_store.py). Machine-local
+# and append-only: it grows with every scan and each machine's copy diverges
+# immediately, so committing it would mean a binary merge conflict per run.
+# backend/fixtures/ carries the captured scan that seeds it — re-seed with
+# `python -m scripts.scan_winning`.
+backend/data/

@@ -11,6 +11,7 @@ const STRINGS = {
   en: {
     navSearch: "Search",
     navTrending: "Trending",
+    navWinning: "Winning Products",
     navBestSellers: "Product Search",
 
     bestHeading: "Search products",
@@ -241,6 +242,7 @@ const STRINGS = {
   az: {
     navSearch: "Axtarış",
     navTrending: "Trend",
+    navWinning: "Qalib məhsullar",
     navBestSellers: "Məhsul axtarışı",
 
     bestHeading: "Məhsul axtar",

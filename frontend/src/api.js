@@ -8,6 +8,17 @@ async function handleResponse(response) {
   return response.json();
 }
 
+// Winning Products (backend app/winning.py). Reads the captured chart scan plus
+// whatever snapshot history exists locally — free. `live: true` is the only
+// path that spends Rainforest credits (2 per category), so it is never the
+// default and never fires on a plain page load.
+export async function fetchWinningProducts({ category = "kitchen", live = false, signal } = {}) {
+  const params = new URLSearchParams({ category });
+  if (live) params.set("live", "true");
+  const response = await fetch(`${API_BASE}/api/winning/products?${params.toString()}`, { signal });
+  return handleResponse(response);
+}
+
 export async function searchByText(query, { page = 1, sites = [], signal } = {}) {
   const params = new URLSearchParams({ q: query, page: String(page) });
   if (sites.length) params.set("sites", sites.join(","));

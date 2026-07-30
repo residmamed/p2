@@ -19,6 +19,7 @@ from .scrapers.alibaba import AlibabaScraper
 from .scrapers.aliexpress import AliExpressScraper
 from .scrapers.made_in_china import MadeInChinaScraper
 from .trending import router as trending_router
+from .winning_routes import router as winning_router
 
 app = FastAPI(title="Zyte Product Search")
 
@@ -30,6 +31,7 @@ app.add_middleware(
 )
 
 app.include_router(trending_router)
+app.include_router(winning_router)
 
 SCRAPERS = {
     "alibaba": AlibabaScraper(),
