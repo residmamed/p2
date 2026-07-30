@@ -21,6 +21,28 @@ class Settings(BaseSettings):
     # costs 2 (exact + visual matches are separate calls).
     serpapi_key: str = ""
 
+    # Oxylabs Web Scraper API — step 2 of the Lens sourcing pipeline
+    # (app/lens_suppliers.py). Turns an Alibaba/1688 product URL that Google
+    # Lens matched into supplier name, price and MOQ, with no browser involved.
+    # Unset => that pipeline still answers, on SerpApi's own inline title/price
+    # /thumbnail, and says so per row rather than returning an empty grid.
+    oxylabs_username: str = ""
+    oxylabs_password: str = ""
+    # JavaScript rendering roughly triples the per-page cost and latency. The
+    # fields this app reads (the embedded supplier record, og: tags, JSON-LD)
+    # are all server-rendered, so it is off by default — flip it if a target
+    # starts serving them client-side.
+    oxylabs_render: bool = False
+    # Read each supplier's own site — text *and* the pictures on it — for a
+    # published email or phone (app/supplier_contacts.py). Off by default per
+    # request, not per deployment: it costs several page fetches and a vision
+    # call per supplier, against a pipeline built to answer in under 5s. This
+    # is the kill switch for when it is requested; unset it to refuse globally.
+    claude_supplier_contacts: bool = True
+    # Where the 30-day Lens cache lives. Relative paths resolve against the
+    # backend/ directory (the working directory uvicorn is started from).
+    lens_cache_dir: str = ".cache/lens"
+
     # Browserbase drives the supplier sites' image-upload widgets from a cloud
     # browser instead of a local Chromium (see scrapers/image_discovery.py).
     # Unset => the sourcing pipeline degrades to local Playwright, the same way

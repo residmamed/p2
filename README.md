@@ -56,6 +56,85 @@ This replaces the local-Playwright image path for these sites: no Chromium in th
 - **Concurrency is capped at 3** cloud browsers (`DISCOVERY_CONCURRENCY`) — Browserbase plans cap concurrent sessions and exceeding the cap fails session creation outright rather than queueing.
 - **Supplier resolution and enrichment are both limited to the top 12** ranked listings; enriching all of them would multiply Zyte calls by ~40 per search for rows nobody scrolls to.
 
+## Lens sourcing: the same question, in seconds, with no browser
+
+`POST /api/find-suppliers` (`app/lens_suppliers.py`) is a second route to "who manufactures this?" built on two plain REST calls and nothing else. It does not replace the pipeline above — it finds less — but it answers while the user is still looking at the screen.
+
+```
+STEP 1  SerpApi Google Lens    photo -> product URLs across the whole web
+STEP 2  Oxylabs Web Scraper    each Alibaba/1688 URL -> supplier, price, MOQ
+```
+
+```jsonc
+POST /api/find-suppliers   { "image_url": "..." }   // or { "image_base64": "..." }
+{
+  "query_image": "https://n.uguu.se/uLcAVoUa.jpg",
+  "results": [ { "supplier_name": …, "price": {"min":1.2,"max":2.5,"currency":"USD"},
+                 "moq": "100 pieces", "source": "alibaba",
+                 "match_confidence": "lens_exact_match", "enriched": true } ],
+  "partial_matches": [ … ],          // non-marketplace Lens hits, for context
+  "latency_ms": 5001,
+  "step_timings": { "lens_ms": 4115, "enrichment_ms": 0, "upload_ms": 881 }
+}
+```
+
+**No browser, no Apify.** Both vendors are REST. Uploaded bytes are published first via `serp_lens._publish`, because SerpApi's Lens endpoint accepts a public URL and nothing else — no upload, no multipart, no base64.
+
+**Oxylabs source names** (`app/oxylabs_client.py`), from the docs on 2026-07-29: `alibaba` takes any Alibaba URL; `alibaba_product` takes a product *id*; 1688 and Taobao have no dedicated target and go through `universal`. All of them return **HTML, not parsed JSON** — Alibaba isn't a domain `parse: true` covers — so the structured schema is built by `app/parsing/marketplace_product.py`, which reads og: tags, then JSON-LD, then the page's own hydration blob, then visible text, taking the first source that answers each field.
+
+**Measured, on this machine.**
+
+| run | total | upload | lens | outcome |
+|---|---|---|---|---|
+| dinnerware set | 4673ms | 843ms | 3829ms | 60 Lens matches, 0 reachable on a marketplace |
+| travel tumbler | 5001ms | 881ms | 4115ms | **1 Alibaba listing**, 163 context matches |
+| stroller | 3774ms | 447ms | 3323ms | 94 matches, 0 on a marketplace |
+| any, second time | **~1ms** | — | ~1ms | served from the 30-day cache |
+
+Two things that table says plainly:
+
+- **The 1–2s image-match target is not achievable with this vendor.** SerpApi Lens took 3.3–4.1s on every cold run, and one photo blew the 5s step-1 cap outright and returned a clean `502 Google Lens did not answer within 5s.` The 5s end-to-end budget survives only because step 2 is concurrent — it is step 1 that spends it.
+- **Lens's coverage of Chinese B2B listings is thin.** One marketplace hit across three consumer products. This is the honest cost of not searching the marketplaces' own image indexes, and it is why `/api/sourcing/by-url` still exists and why an empty `results` here ships with a warning saying "Lens found nothing on these sites", never a bare empty list.
+
+**`exact_matches` links are mostly unusable, and that had to be handled rather than ignored.** Every row of a `type=exact_matches` response arrives as `lens.google.com/goto?url=<token>`. The token base64-decodes to protobuf-framed ciphertext with no plaintext URL in it, and fetching the wrapper server-side answers **404** even with a browser user-agent — so the destination is genuinely unknowable without opening it in a browser, the one thing this pipeline exists to avoid. Those rows go to `partial_matches` with a warning naming the marketplace and the count, never to `results`: a supplier row nobody can open, whose supplier can never be read, is worse than an honest absence. Not all of them are wrapped — a live run returned `arabic.alibaba.com/product-detail/…` directly, and that one enriches normally. Fixing this also fixed a dedupe bug it hid: the canonical form drops query strings, and every wrapper shares the path `/goto`, so all 41 exact matches would otherwise have collapsed into one.
+
+**Caching.** Step 1 only, 30 days, keyed on SHA256 of the image bytes for an upload and on the URL for a URL. Step 2 is deliberately never cached: a month-old candidate URL is fine, a month-old price is not. The lookup happens *before* the upload — ordering it the other way cost a full 761ms image publish on a 764ms cache hit, i.e. the entire saving handed straight back.
+
+**Degradation, per the same rule as the rest of the app.** No Oxylabs credentials → every row survives on SerpApi's inline title/price/thumbnail, flagged `enriched: false` with the reason on the row. Credentials *rejected* → the same, plus a top-level `errors` entry naming the env vars, kept separate from `warnings` because it is an operator's problem and not a partial result. One product page hangs past its 8s → that row alone falls back. A page that loads but parses to nothing is reported as such rather than yielding a half-invented supplier. `supplier_name` is never back-filled from Lens's `source` label — that string is `"Alibaba.com"` on every Alibaba row, so using it would print the marketplace where the factory's name goes.
+
+**Step 2, verified live against Alibaba** (2026-07-29, real Oxylabs credentials). A batch of 7 URLs enriched 6, in 8.6s wall clock; the seventh was a delisted listing and correctly degraded. Suppliers came back correctly *distinct* across product categories (`Shen Zhen Liyonda Technology`, `Shenzhen Tao Hui Industrial`, `Jinhua Danuo Melamine Tableware`), which is what rules out the parser latching onto page chrome. Per-page latency, six fetched concurrently: **2.3 / 2.3 / 2.5 / 2.8 / 3.4 / 4.9s** for 410–454KB pages.
+
+Three things that only a live run could have shown, each now pinned by a test:
+
+**1. JSON-LD publishes the wrong price.** Alibaba's `offers.price` is the *bottom* of the quantity ladder — the rate at five thousand units — while the MOQ is 24:
+
+```
+JSON-LD    "price": "2.99", "priceCurrency": "USD"
+priceList   $3.99 (24-199)   $3.59 (200-4,999)   $2.99 (5,000+)
+MOQ         24 pieces
+```
+
+Publishing "$2.99, MOQ 24 pieces" isn't a rounding error, it's the wrong number — at the minimum order this supplier charges $3.99. The ladder wins, and both ends are reported as a range.
+
+**2. Prices are localised by exit IP, and the currency does not travel with them.** The same URL returned its ladder in Serbian dinar (`RSD 452.71`) from one exit and dollars from another, while the JSON-LD block still said `USD`. Taking a number from one source and a currency from the other reports **$452.71 for a $2.99 tumbler**, so every price is parsed out of a single formatted string carrying its own symbol, and a ladder whose rungs disagree about currency is discarded rather than reconciled. (The first version of that money regex knew only `$`/`¥`/`USD`/`CNY`, so a euro page parsed to nothing, the ladder was skipped, and the price silently fell back to the misleading floor — the exact bug the ladder exists to prevent, reintroduced by a regex too narrow to notice.)
+
+The localisation itself is now pinned at the source. Six fetches of one product URL:
+
+```
+no geo_location   R 28,52 · 82.47 TL · $1.67 · R 28,52 · R 28,52 · $1.67
+"United States"   $1.67 · $1.67 · $1.67 · $1.67 · $1.67 · $1.67
+```
+
+So `oxylabs_client.GEO_FOR_SITE` fixes Alibaba's exit to the US and the results table can actually be used to compare suppliers. Pinning beats converting downstream — there is no exchange rate in this codebase and an invented one would put a wrong number on a supplier quote. 1688 and Taobao are left unpinned: they are domestic Chinese sites that quote CNY natively.
+
+**3. Delisted listings serve a complete, well-formed lie.** A dead Alibaba product answers **HTTP 200** with valid JSON-LD: `name: "Product Not Available"`, `brand: "Alibaba"`, `price: "0.99"`, `availability: "InStock"`. Nothing about its shape says it is dead — the first live run of this pipeline duly reported a supplier called "Alibaba" selling a "Product Not Available" for $0.99. It is now caught by title, and the marketplace's own name is never accepted as a supplier.
+
+Alibaba **product** pages are not bot-checked (0 captcha markers across every page fetched); Alibaba **search** pages through the same source are (26 markers), which matches what `supplier_resolve.py` already recorded. Transient `504`s from Oxylabs' own gateway are retried once — observed turning 3-of-4 into 4-of-4 — while timeouts are not, since those have already spent the per-URL budget.
+
+Test script: `python -m scripts.find_suppliers_demo <url|path>` prints timings, warnings and the full JSON (`--no-cache` forces a live call).
+
+> **Still unverified:** the 1688 and Taobao selectors in `marketplace_product.py`. Lens returned no reachable listing on either site during testing, so nothing exercised them; they are written from the page's documented shape and follow the `supplier_resolve.VERIFIED` convention. A miss there costs one field on one row — the caller falls back to SerpApi's data and says so.
+
 ## Relevance screening: only the product you searched for
 
 A keyword search returns whatever the site's matcher liked. Searching `tumbler` on Temu, Costco and IKEA came back with **103 listings, of which 57 were not tumblers** — lids, straws, cleaning brushes, cup-holder expanders and outright unrelated stock. Nothing scraped tells those apart from a tumbler: a lid has a rating, a price, a sold count and a page position just like the product does. Only reading the title does.
@@ -105,9 +184,9 @@ A second mode (tab toggle in the UI) for discovery rather than direct lookup: ty
 - **Detection** runs in-process (not a separate sidecar — this backend is already Python/FastAPI) using `yolov8s-worldv2.pt` + its CLIP text-encoder weights, both expected at `backend/yolov8s-worldv2.pt` / `backend/weights/clip/ViT-B-32.pt` (gitignored — `ultralytics` auto-downloads them on first use if missing, ~360MB combined, one-time).
 - No persistence: this app has no database, so a picked image's detections aren't saved — refreshing/reselecting re-runs detection. Cropped images live in a small in-memory, capped LRU-ish dict (`_CROP_STORE` in `app/trending.py`) keyed by an opaque `crop_id`, not written to disk.
 
-## Product Search: one merged top-100 across five retail sites
+## Product Search: one merged top-100 across twelve sources
 
-*What's already selling at retail for this keyword?* — across **Amazon, Walmart, Temu, Costco and IKEA**. `/api/bestsellers?q=...&sites=...` fans out concurrently and returns one merged, ranked top-100 (`app/bestsellers.py`). **No mock data anywhere** — the frontend calls this endpoint directly.
+*What's already selling at retail for this keyword?* — across **Amazon, Walmart, Temu, Costco, IKEA, Target, Home Depot, eBay, Etsy, Best Buy and Wayfair**, plus **Google Shopping**, which is not a store and answers the keyword by picture instead. `/api/bestsellers?q=...&sites=...` fans out concurrently and returns one merged, ranked top-100 (`app/bestsellers.py`). **No mock data anywhere** — the frontend calls this endpoint directly.
 
 Every site's capability below was **probed live**, not assumed (`spikes/probe_bestseller_sorts.py`, `spikes/probe_hard_sites.py`):
 
@@ -118,6 +197,13 @@ Every site's capability below was **probed live**, not assumed (`spikes/probe_be
 | IKEA | Zyte `productList` + product-page JSON-LD | `relevance` | `sort=BEST_SELLER` is **ignored**. Search results carry no ratings, but each product page ships schema.org `aggregateRating` — fetched per product, affordable because IKEA returns only ~4 results |
 | Temu | **Apify** `amit123/temu-products-scraper` | `sold_count` | Zyte returns **0 products** in every mode and Browserbase hits a "Security verification" wall. The actor returns `sales_num` ("46K+") — real units sold — plus rating/review count nested inside `comment` (`goods_score`, `comment_num_tips`) |
 | Costco | **Apify** `e-commerce/costco-fast-product-scraper` | `rating` | Zyte returns **HTTP 520 Website Ban**. The actor returns `rating` + `reviewsCount` but no sales figures |
+| Target | **Apify** `automation-lab/target-scraper` + `sort=bestselling` | `bestseller_sort` | The sort **reorders** — "water bottle" comes back Owala-first, which is in fact the best seller. Returns `rating` + `reviewCount` on 8 of 10 rows. The top row is routinely the one with **no price**: Target prices multi-variant listings per variant |
+| Home Depot | **Apify** `crawlerbros/homedepot-scraper` + `sortBy=top_sellers` | `bestseller_sort` | Home Depot's own top-sellers order. **No rating or review count** anywhere in the output, so the sort is the only signal it offers — a stronger one than a rating anyway. `maplerope44/home-depot-product-lookup` was 10× more popular but takes a `productId`, so it cannot answer a keyword search at all |
+| eBay | **Apify** `automation-lab/ebay-scraper` + `sort=best_match` | `relevance` | The sort enum offers **no best-selling option**. `soldCount` exists but came back **empty on every probed row**, and the only rating-shaped fields (`sellerFeedbackPercent`) rate the *seller across all sales*, not the product — so eBay rows carry no rating. Restricted to `buy_it_now`: an auction has no stable price to rank or compare |
+| Etsy | **Apify** `automation-lab/etsy-scraper` | `relevance` | No best-selling sort. Returns a `rating` with **no review count at all**, so the rating travels on the row but can't order the grid. Its `price` is **malformed** — a $19.99 listing arrives as `"19.9919"`, the price with its own leading digits repeated — recovered by taking the leading amount |
+| Best Buy | **Apify** `piotrv1001/bestbuy-listings-scraper` | `relevance` | No sort parameter of any kind. Complete `rating` + `reviewsCount`, price nested under `priceDomain.currentPrice`. `crawlerbros/bestbuy-scraper` was tried first and returned `{"type": "bestbuy_error", "reason": "no_results"}` — its bot challenge had persisted across all retries — so this site is the likeliest of the six to come back empty |
+| Wayfair | **Apify** `piotrv1001/wayfair-listings-scraper` | `relevance` | Takes only `startUrls`, so no sort. The most complete data of the six: price, `rating` and `reviewCount` on **10 of 10** probed rows. `mscraper/wayfair-scraper` is the better-known actor but rents at a **flat $20/month**; this one bills $0.0015 per product |
+| Google Shopping | **Apify** Pinterest → **SerpApi** Google Lens | `relevance` | Not a store — see below. Nothing in the chain ranks anything, so it carries the lowest confidence weight in the merge |
 
 - **Default ordering is grouped by store**, best-selling first within each. A single interleaved list answers "what sells best overall", but the workflow is per-store — you compare Amazon's top sellers against each other, then Walmart's. Grouping also keeps each store's ordering internally honest: within one store every row shares a Rank Basis, so the comparison is like-for-like. `site_rank` is the position within a store, `combined_rank` the position overall.
 - **Walmart moved to SerpApi because Zyte's prices were wrong 13–26% of the time.** Head-to-head on two live queries, verified against the product pages themselves:
@@ -139,16 +225,30 @@ Every site's capability below was **probed live**, not assumed (`spikes/probe_be
 - **A structured API returning zero results says so.** It used to fall through to Zyte silently, so the user saw the fallback's complaints with nothing explaining why the better source went unused.
 - **Amazon uses Rainforest because SerpApi rounds review counts.** `131,434` arrives from SerpApi as `131,400`, `53,997` as `53,900` — three significant figures, with no option to turn it off. Both APIs return the same best-seller ordering and the same purchase-volume figures, so precision is the whole difference; Rainforest is also the cheaper of the two per request. SerpApi stays as Amazon's fallback for a spent Rainforest quota.
 - **One SerpApi quota covers Walmart results (1 search per query) and Google Lens (2 per photo, exact + visual).** Worth watching on the free 250/month tier.
-- **Thumbnails are upgraded to full resolution.** Every source returns an image sized for its own grid, which looked blurry on larger cards — Amazon 320px, Costco 350px, IKEA's smallest preset, Walmart 576px. All encode the size in the URL, so `app/product_images.py` rewrites it with no extra request: Amazon now 2500px, Temu 1600px, Costco 1200px, Walmart 1000px, IKEA 900px. Unrecognised URLs pass through untouched — a broken high-res guess is worse than a working thumbnail.
+- **Thumbnails are upgraded to full resolution.** Every source returns an image sized for its own grid, which looked blurry on larger cards — Amazon 320px, Costco 350px, IKEA's smallest preset, Walmart 576px. All encode the size in the URL, so `app/product_images.py` rewrites it with no extra request: Amazon now 2500px, Temu 1600px, Costco 1200px, Walmart 1000px, IKEA 900px. Unrecognised URLs pass through untouched — a broken high-res guess is worse than a working thumbnail. The five newer rules were each checked by fetching both URLs, since a size token that *looks* like a dimension is not evidence that it is one: eBay `s-l500`→`s-l1600` (20KB→86KB), Etsy `il_300x300`→`il_1140xN` (12KB→103KB), Home Depot `_600`→`_1000` (17KB→37KB), Wayfair `resize-h600-w600`→`h1600-w1600` (60KB→377KB), and Target — whose actor sends a **bare** Scene7 URL with no size directive at all, rendering ~9KB — gains `?wid=1200` (9KB→90KB).
+- **A `0` rating means unrated, not terrible.** Best Buy returns `rating: 0.0` alongside `reviewCount: 0` for a product nobody has reviewed. Every store here rates on 1–5 stars, so there is no such thing as a real zero: kept as `0.0` it would sort below every genuinely bad product and drag the Market Snapshot average down, asserting something about the product the store never said. Both fields are cleared. (Walmart's fallback parser already did this for the same reason.)
 - **Truncation is fair across stores.** With results grouped by store, a plain `[:TOP_N]` slice let the first stores take the whole budget: Amazon(40)+Walmart(41)+Temu(19) hit exactly 100 and Costco and IKEA disappeared from a search that had selected them. Slots are now dealt round-robin across stores, then re-grouped for display.
 - **Rank Basis is carried on every product.** A site with no best-selling sort is ranked by page order and labelled as such — never presented as a best-seller ranking it didn't earn.
 - **Weighted merge.** Before the cross-site sort each Normalized Score is multiplied by a confidence weight for its basis: `sold_count` 1.00, `bestseller_sort` 0.92, `rating` 0.70, `relevance` 0.45. Measured purchase volume outranks a sort position deliberately — "20K+ bought in past month" is a magnitude, while "first in Walmart's best_seller sort" carries none (positions 1 and 2 could differ by 100× or by nothing). Ranking the opinion above the measurement put a Walmart row with no demand data ahead of a 20,000-unit-a-month best seller.
 - **Variant rows are collapsed within a site.** Amazon lists every colour and size separately with its own ASIN, which stacked three identical Owala entries at the top. The parent product is identified by shared review count *plus* the brand/model words in the title — both are required, since review count alone can collide and a title prefix alone would merge different products of the same brand. Cross-site merging stays identifier-only.
-- **`productList` returns no rating or review data** for any of these five sites — measured, not assumed. That's why the old `rating × review_count` Popularity Score was replaced: it had nothing to compute from. Sold counts (Temu cards, Amazon's "N bought in past month") are the real demand signal. Amazon and Walmart now get ratings from SerpApi directly.
+- **`productList` returns no rating or review data** for any of the five sites it serves — measured, not assumed. That's why the old `rating × review_count` Popularity Score was replaced: it had nothing to compute from. Sold counts (Temu cards, Amazon's "N bought in past month") are the real demand signal. Amazon and Walmart now get ratings from SerpApi directly.
 - **Badge chrome is stripped from titles** on the Zyte fallback path. Walmart's `name` arrives as `"100+ bought since yesterday TAL 40 oz…"`; the prefix is peeled off — keeping the number as a demand figure — so titles stay clean for export, compare and $/oz parsing. SerpApi returns titles already clean.
 - **Zyte-banned sites go through the browser** (`app/retail_browser.py`): DOM harvest of every product-shaped anchor plus its card text, then regex for price/sold/rating. Class names on Temu and Costco are hashed and rotate; link shape and card text don't.
 - **Cross-site merge is identifier-only.** Two listings collapse into one row only with a confirmed shared identifier — never fuzzy title/image matching. Amazon now carries an ASIN and Walmart a `us_item_id` on every row, but those are site-private namespaces, so in practice merging still seldom fires; the conservative rule stands.
-- **Caching.** In-memory per (query, sites) for 30 min.
+- **Google Shopping answers the keyword by picture** (`app/google_shopping.py`). Every other source hands the keyword to a store's search box; this one goes `keyword → Pinterest images → Google Lens on each → the pages Lens found selling that thing → keep only the titles that describe the keyword`. Pinterest is the entry point because its images are what people actually save about a category, and because Lens needs a publicly reachable URL — which a Pinterest CDN image already is, so nothing has to be uploaded (see `serp_lens._publish` for why that matters).
+
+  **The last step is the whole difficulty, and it was measured.** A Pinterest image for "desk lamp" is a photograph of a *room*, and Lens answers with what it sees in it: the desk, the chair, the rug, the plant. Each is a real product on a real shop page and each is the wrong answer. The gate requires two things of a title — the keyword's **head noun** (the last word of an English product phrase is the product) and enough of the qualifiers. Both are needed, and a live "desk lamp" run showed why:
+
+  | gate | dropped | what got through |
+  |---|---|---|
+  | 50% word overlap only | 55 of 231 | lamp shades, ceiling lights, floor lamps — every one contains "lamp" |
+  | head noun + **both** words of a 2-word keyword | **182 of 231** | desk lamps from Walmart, Wayfair, Etsy, eBay, Amazon |
+
+  Without the head-noun rule, `"Stainless Steel Cutlery Set"` scores two of four against `"stainless steel water bottle"` and clears a 50% threshold while being a different product. Without the two-word floor, a two-word keyword is satisfied by its head noun alone and `"desk"` is never actually required. The gate lives in this module rather than relying on the Claude relevance screen in `bestsellers.py`, because that screen is a kill switch away from being off and this source is unusable without filtering. Pinterest's own domains are blocked from the results — the chain starts there, so a Pinterest board Lens matched back to the image we searched with is a circle, not a shop. Priced listings sort first: on a source called Shopping, a page you can buy from shouldn't sit below a blog post about the same lamp (only a minority of Lens rows carry a price at all).
+
+  **Cost:** one Apify actor run plus **2 SerpApi credits per image** (exact + visual are separate calls) — 8 per search at the default 4 images, against the quota shared with Amazon, Walmart and the photo search. Which is why the image count is small and the source is opt-in rather than in the default set.
+- **"Find more" is per store, not global** (`/api/bestsellers/more?q=&site=&have=`). One button per store that returned results, because "more" means something different at each one and only the store can say whether it has any: Target can open another page of its best-selling sort, while IKEA returns nine results in total and is simply finished. A single global button would have to average those into one answer and be wrong at both ends. An empty batch is how a store says it's done — the button says **"no more"** rather than raising an error, since being finished is not a fault. Two of the three transports can go deeper: actors are asked for `have + 24` rows and the tail is returned (none of them accepts an offset, so the earlier rows are billed again — which is exactly why this is a button and not automatic), and SerpApi walks the same sort by page. Rainforest is skipped on this path because it has no page parameter and would re-return page 1 as though it were page 2. Depth is capped at 150: every press refetches everything before it, so cost grows while the number of new rows stays flat. A photo search shows no buttons at all — its results came from Lens matching an image, so there is no keyword to page with.
+- **Caching.** In-memory per (query, sites) for 30 min. The per-store "find more" is deliberately uncached — it exists to go past what the cached first page holds.
 
 ## Category-manager workbench
 
@@ -157,6 +257,12 @@ Daily-driver productivity layer on top of Product Search, built for the "find a 
 - **Photo search (Google Lens)** — the camera icon inside the search bar (no separate mode toggle) uploads a photo, crops to the item, and runs a **real reverse-image search via the Google Lens API** (unlike text search, this is never mocked — it calls the backend `/api/trending/search-lens` Apify actor, so it needs the backend running with `APIFY_TOKEN` set). Each hit's destination URL is mapped to its retail site; the pixel-identical ("exact-match") hits on the *selected* sites are shown first as green "Exact match" cards, re-badged to the site they live on. When none of the selected sites have an exact match, it falls back to the 5 closest visual matches with an amber banner. Real Lens data is often sparse (no rating/price), so score chips and $/oz simply don't render for those cards.
 - **Market snapshot** — collapsible stats panel above results: median price, price range + distribution histogram, avg rating, total reviews, median $/oz, site mix, and a competition level derived from median review depth.
 - **Refine & sort toolbar** — filter within results (text, price band, min rating, min reviews) and sort by opportunity score, price, rating, reviews, or $/oz; shows "X / Y" and one-click clear. Filtering never changes a product's Opportunity Score (scores normalize against the *full* result set).
+- **Sorting by rating weighs the review count.** Raw stars put a 5.0 from two buyers above a 4.7 from twenty-one thousand, so the grid led with the listings we knew least about. The sort ranks the **lower bound of a Wilson confidence interval** on the rating instead: the more reviews behind a rating, the less it is marked down. `4.7 × 21,000` scores just under 4.7; `5.0 × 2` scores far below it. A Bayesian/IMDb shrinkage toward the set average was tried first and is the wrong instrument here — when the set's mean lands near the best-evidenced listing's own rating, every score collapses into a near-tie and the unproven 5.0 edges ahead on upside, which is the original complaint intact. A confidence bound has no such degenerate case and rises monotonically with review count, so more evidence can only ever help. A rating published with no review count sits at the floor rather than being dropped, and a `0` rating is treated as unrated (see above). The dropdown says "Rating (review-weighted)", because it no longer means raw stars.
+- **Suppliers are prefetched silently after a product search — both passes.** When results land, the supplier lookup starts in the background for the top products and renders nothing: no progress bar, no rows, no warnings. Suppliers still appear only when the user asks for them; the point is purely that the asking is then fast. The caches in `api.js` are keyed per product photo, so the click either finds the answer already there or joins the request in flight rather than re-issuing (and re-billing) it. The prefetch is capped, runs on its own AbortController so a new search cancels it, and is cleared when a new search starts so a previous query can never serve its suppliers.
+  - **The prefetch follows through to the deep marketplace search**, which it originally skipped as too expensive to run unasked. Skipping it warmed the cheap half of the work: Google Lens has no Chinese B2B listing for most branded retail products, so the click still had minutes of driven browsers ahead of it and a progress bar reading "searching the marketplaces directly (slower)". That wait was the prefetch's whole reason for existing, unaddressed. The deep pass now starts with the product results.
+  - **It is paced, not fanned out.** One deep search already drives three browser sessions at once (`sourcing.py`'s `DISCOVERY_CONCURRENCY`), so twelve concurrently would be thirty-six and Browserbase would refuse most of them. Products go through the deep pass one at a time, and only the first `AUTO_DEEP_MAX` of them — the unasked-for run never holds more sessions than one press of the button does.
+  - **The slow-search message is only shown for products actually being waited on.** The deep cache tracks whether each lookup has come back, not just whether it was started, so a click landing after the prefetch finished gets its suppliers straight out of the cache with no "searching the marketplaces" claim attached. A click landing mid-prefetch still shows it, because then it is true.
+- **Supplier phone numbers are not displayed.** Not in the results table (the column is gone), not in the message modal's recipient chips (they name the channel — "WhatsApp", "SMS" — instead of the number), and not in the Excel export, since an export that carried them would put back on a spreadsheet exactly what was taken off the screen. Email and the platform inbox are the contact routes offered. The backend still *collects* phone numbers, which is what makes the WhatsApp/SMS channels available at all.
 - **Opportunity Score** — 0–100 chip on each card (demand/quality/value breakdown in the tooltip); unscoreable listings (no rating + no reviews) show nothing rather than a fake 50. See `CONTEXT.md`.
 - **$/oz normalization** — capacity and pack count are parsed out of listing titles ("40oz", "700ml", "2 Quart", "2-Pack", "Set of 16") to compare price per fluid ounce per unit; unparseable titles show no figure.
 - **Pipeline** (nav tab, with live count badge) — kanban board of saved products across Researching → Contacted → Sampling → Approved / Dropped, with drag-and-drop, per-item notes, tags, target cost, "days ago", Excel export, and a margin button. Products are saved from any result card's bookmark button.
@@ -187,11 +293,15 @@ Implementation: pure analytics live in `frontend/src/productMetrics.js` (price/u
 backend/app/
   main.py                    FastAPI routes, multi-site fan-out (asyncio.gather) + per-site warning prefixing
   zyte_client.py              Zyte API wrapper (browserHtml + httpResponseBody modes)
+  lens_suppliers.py           /api/find-suppliers — the browserless SerpApi Lens + Oxylabs pipeline
+  oxylabs_client.py           Oxylabs Web Scraper API (realtime endpoint, typed auth vs transient failures)
+  lens_cache.py               30-day disk cache of step-1 Lens results, keyed by image hash
   scrapers/
     base.py                    Scraper interface (search_by_text / search_by_image)
     alibaba.py, aliexpress.py, made_in_china.py
   parsing/
     alibaba_parser.py, aliexpress_parser.py, made_in_china_parser.py
+    marketplace_product.py     Alibaba/1688/Taobao product page -> og: / JSON-LD / hydration blob / text
   models.py                  Product (site, detected_item, inspiration_image_url) / SearchResponse / Trending models
   pinterest.py               Apify client (Idea -> inspiration images)
   detection.py                In-process YOLO-World object detection

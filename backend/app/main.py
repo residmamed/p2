@@ -1,13 +1,20 @@
 import asyncio
 
-from fastapi import FastAPI, File, HTTPException, Query, UploadFile
+from fastapi import Body, FastAPI, File, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 
-from . import bestsellers, claude_agent, sourcing
+from . import bestsellers, claude_agent, lens_suppliers, sourcing
 from .config import settings
 from .google_lens import GoogleLensError, search_google_lens_products
 from .image_match import match_and_group
-from .models import Product, SearchResponse, Seller, SourcingResponse
+from .models import (
+    FindSuppliersResponse,
+    Product,
+    SearchResponse,
+    Seller,
+    SourcingResponse,
+)
 from .scrapers.alibaba import AlibabaScraper
 from .scrapers.aliexpress import AliExpressScraper
 from .scrapers.made_in_china import MadeInChinaScraper
@@ -234,11 +241,53 @@ async def source_by_url(
     return await sourcing.source_by_image_url(image_url, sites=requested, enrich=enrich)
 
 
+class FindSuppliersRequest(BaseModel):
+    """Either field, never both. A URL is the fast path — nothing has to be
+    published first — while base64 covers a photo that only exists on the
+    caller's machine."""
+
+    image_url: str | None = None
+    image_base64: str | None = None
+    # Read each supplier's own site — text and the pictures on it — for a
+    # published email or phone. Off by default: several page fetches and a
+    # vision call per supplier, so it turns a ~5s request into a ~30s one.
+    include_contacts: bool = False
+
+
+@app.post("/api/find-suppliers", response_model=FindSuppliersResponse)
+async def find_suppliers(request: FindSuppliersRequest = Body(...)):
+    """Photo -> Chinese supplier listings via Google Lens + Oxylabs, no browser.
+
+    The fast counterpart to /api/sourcing/image: one SerpApi Lens call for the
+    visual match, then concurrent Oxylabs fetches of each Alibaba/1688 product
+    page for supplier, price and MOQ. Targets under 5s where the sourcing
+    pipeline takes minutes; in exchange it only finds what Lens has indexed, and
+    labels every row `lens_*_match` because nothing here compares the two
+    products. See app/lens_suppliers.py.
+    """
+    try:
+        return await lens_suppliers.find_suppliers(
+            image_url=request.image_url,
+            image_base64=request.image_base64,
+            include_contacts=request.include_contacts,
+        )
+    except lens_suppliers.FindSuppliersError as e:
+        # Bad input and a missing/unreachable Lens are different faults, and a
+        # caller retrying a 400 forever because we returned 502 (or vice versa)
+        # is a real cost. Configuration and upstream failures are ours (502).
+        message = str(e)
+        ours = any(
+            hint in message
+            for hint in ("not configured", "did not answer", "Image host", "Could not publish")
+        )
+        raise HTTPException(502 if ours else 400, message)
+
+
 @app.get("/api/bestsellers", response_model=SearchResponse)
 async def best_sellers(
     q: str = Query(..., min_length=1),
     sites: str | None = Query(
-        None, description="Comma-separated: amazon,walmart,temu,costco,bm,wibra,ikea"
+        None, description="Comma-separated, e.g. amazon,walmart,temu,target,wayfair"
     ),
 ):
     try:
@@ -246,6 +295,26 @@ async def best_sellers(
     except ValueError as e:
         raise HTTPException(400, str(e))
     return await bestsellers.best_seller_search(q, site_list)
+
+
+@app.get("/api/bestsellers/more", response_model=SearchResponse)
+async def best_sellers_more(
+    q: str = Query(..., min_length=1),
+    site: str = Query(..., description="A single site id — this is per-store paging"),
+    have: int = Query(0, ge=0, description="How many rows from this store are already shown"),
+):
+    """The next batch from one store, for its own "find more" button.
+
+    An empty `results` list is the ordinary way of saying that store has nothing
+    further — the caller shows "no more", not an error. `warnings` explains why
+    when the reason is worth stating (paging depth reached, store returns
+    everything at once).
+    """
+    if site not in bestsellers.SITES:
+        raise HTTPException(
+            400, f"Unknown site '{site}'. Valid: {', '.join(bestsellers.ALL_SITES)}"
+        )
+    return await bestsellers.more_from_site(q, site, have)
 
 
 @app.get("/api/health")

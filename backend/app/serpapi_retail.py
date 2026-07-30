@@ -190,8 +190,13 @@ async def _request(params: dict) -> dict:
             )
 
 
-async def search(site_id: str, query: str) -> tuple[list[Product], list[str]]:
-    """Fetch one site's best-selling results. Returns (products, warnings)."""
+async def search(site_id: str, query: str, page: int = 1) -> tuple[list[Product], list[str]]:
+    """Fetch one site's best-selling results. Returns (products, warnings).
+
+    `page` walks further down the same best-selling sort, for the per-store
+    "find more" button. Both engines count pages from 1, and each page is a
+    separate billed search — so it is only ever requested on demand.
+    """
     if site_id not in ENGINE_PARAMS:
         raise SerpApiError(f"No SerpApi engine configured for '{site_id}'.")
     label = site_id.capitalize()
@@ -203,6 +208,8 @@ async def search(site_id: str, query: str) -> tuple[list[Product], list[str]]:
         QUERY_PARAM[site_id]: query,
         "api_key": settings.serpapi_key,
     }
+    if page > 1:
+        params["page"] = str(page)
     payload = await _request(params)
 
     if payload.get("error"):

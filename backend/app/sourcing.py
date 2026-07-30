@@ -57,7 +57,7 @@ from dataclasses import dataclass
 import httpx
 
 from . import browserbase_client as bb
-from . import claude_agent, supplier_resolve
+from . import apify_suppliers, claude_agent, supplier_resolve
 from .config import settings
 from .image_match import HASH_BITS, score_against_query
 from .models import Product, SourcingResponse, SourcingResult, SupplierProfile
@@ -224,9 +224,44 @@ async def _extract(site: str, discovery: image_discovery.Discovery, zyte: ZyteCl
     return [], warnings
 
 
-async def _run_site(site: str, image_bytes: bytes, content_type: str, zyte: ZyteClient) -> SiteOutcome:
+async def _run_site(
+    site: str,
+    image_bytes: bytes,
+    content_type: str,
+    zyte: ZyteClient,
+    image_url: str | None = None,
+) -> SiteOutcome:
     """Stages 1+2 for one site, chained so extraction starts the moment that
-    site's browser session is done rather than waiting on the slowest site."""
+    site's browser session is done rather than waiting on the slowest site.
+
+    Alibaba and 1688 take the Apify route when the query came in as a URL (the
+    Manufacturer Search case) — one call that both reaches the site and names
+    the supplier, instead of a cloud browser driving the upload widget into a
+    captcha. The browser path is still here and still runs for those two sites
+    when the search started from an uploaded file, since there is no public URL
+    to hand an actor then.
+    """
+    if image_url and apify_suppliers.handles(site):
+        products, warnings = await apify_suppliers.search(site, image_url)
+        if products:
+            return SiteOutcome(
+                site=site,
+                products=products,
+                status=f"{len(products)} listing(s)",
+                warnings=warnings,
+            )
+        # Empty is a real answer here (the site matched nothing), but the
+        # browser path is a genuinely different search — it uploads the file
+        # rather than passing a URL — so it's still worth one attempt.
+        warnings.append(f"[{SITE_LABELS.get(site, site)}] Falling back to the browser upload.")
+        outcome = await _run_site(site, image_bytes, content_type, zyte)
+        return SiteOutcome(
+            site=outcome.site,
+            products=outcome.products,
+            status=outcome.status,
+            warnings=warnings + outcome.warnings,
+        )
+
     discovery = await image_discovery.discover(site, image_bytes, content_type)
     if not discovery.ok:
         return SiteOutcome(site=site, products=[], status="upload failed", warnings=discovery.warnings)
@@ -371,8 +406,10 @@ async def source_by_image_url(
         )
 
     content_type = (response.headers.get("content-type") or "image/jpeg").split(";")[0].strip()
+    # The URL travels alongside the bytes: the Apify actors search by URL, and
+    # this is the only entry point that has one to give them.
     return await source_by_image(
-        response.content, content_type, sites=sites, zyte=zyte, enrich=enrich
+        response.content, content_type, sites=sites, zyte=zyte, enrich=enrich, image_url=image_url
     )
 
 
@@ -382,6 +419,7 @@ async def source_by_image(
     sites: list[str] | None = None,
     zyte: ZyteClient | None = None,
     enrich: bool = True,
+    image_url: str | None = None,
 ) -> SourcingResponse:
     """Run the full photo -> suppliers pipeline across the selected sites.
 
@@ -398,21 +436,35 @@ async def source_by_image(
     warnings: list[str] = []
     site_status: dict[str, str] = {}
 
+    # Browserbase is only needed by the sites Apify can't serve. It used to gate
+    # the whole endpoint, which would now turn off Alibaba and 1688 — the two
+    # sites that no longer need a browser at all — over a missing key they don't
+    # use.
     if not bb.is_configured():
-        return SourcingResponse(
-            results=[],
-            warnings=[
-                "Image sourcing needs Browserbase — set BROWSERBASE_API_KEY and "
-                "BROWSERBASE_PROJECT_ID in backend/.env."
-            ],
-        )
+        served = [s for s in site_ids if image_url and apify_suppliers.handles(s)]
+        blocked = [s for s in site_ids if s not in served]
+        if not served:
+            return SourcingResponse(
+                results=[],
+                warnings=[
+                    "Image sourcing needs Browserbase — set BROWSERBASE_API_KEY and "
+                    "BROWSERBASE_PROJECT_ID in backend/.env."
+                ],
+            )
+        if blocked:
+            for site in blocked:
+                site_status[site] = "not configured"
+            names = ", ".join(SITE_LABELS.get(s, s) for s in blocked)
+            verb = "needs" if len(blocked) == 1 else "need"
+            warnings.append(f"{names} {verb} Browserbase and were skipped; the rest ran.")
+        site_ids = served
 
     # --- stages 1 + 2 ---------------------------------------------------
     semaphore = asyncio.Semaphore(DISCOVERY_CONCURRENCY)
 
     async def _guarded(site: str) -> SiteOutcome:
         async with semaphore:
-            return await _run_site(site, image_bytes, content_type, zyte)
+            return await _run_site(site, image_bytes, content_type, zyte, image_url)
 
     outcomes = await asyncio.gather(*(_guarded(s) for s in site_ids), return_exceptions=True)
 
@@ -532,4 +584,25 @@ async def source_by_image(
                 page_profile.warning = None
         r.supplier = page_profile
 
+    _prefer_listing_seller_name(results[:ENRICH_TOP_N])
     return SourcingResponse(results=results, warnings=warnings, site_status=site_status)
+
+
+def _prefer_listing_seller_name(results: list[SourcingResult]) -> None:
+    """Let the listing's own seller name win over the scraped company page's.
+
+    The company page contributes its name by parsing the minisite, and on
+    Alibaba that yields the page's <title>: measured on a live run, five rows
+    came back as "Company Overview - Yongkang Baimuyu Industri..." while the
+    listing itself carried the clean "Yongkang Baimuyu Industries And Trading
+    Co., Ltd." from the site's own structured data. The frontend renders
+    `supplier.company_name ?? product.seller_name`, so the page-title version
+    was winning — a worse string displacing a better one for every row that now
+    arrives with a seller.
+
+    Contacts, years, business type and the rest of the scraped profile are left
+    exactly as they were: the page is still the only source for those.
+    """
+    for r in results:
+        if r.supplier and r.product.seller_name:
+            r.supplier.company_name = r.product.seller_name

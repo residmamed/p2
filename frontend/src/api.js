@@ -22,7 +22,17 @@ import { siteForUrl } from "./sites";
 // search fans out to Zyte (and a cloud browser for Temu/Costco); manufacturer
 // search drives a browser upload per supplier site, so it's much slower.
 export const PRODUCT_SEARCH_MS = 30000;
+// The browser-upload pipeline's own pacing, kept for /api/sourcing/by-url.
 export const MFR_SEARCH_MS = 120000;
+// Lens Sourcing's. Products are searched concurrently, so the wall clock is the
+// slowest single product rather than the sum. Measured on five cold products at
+// once — the shape a real basket has, not the single image it is tempting to
+// test with: 5.4s, 7.3s, 13.0s, 13.7s, 16.1s, so 16.1s wall clock. Warm, with
+// the image already in the 30-day Lens cache, the same five took 8.7s.
+//
+// Sized for the cold case: a bar that finishes early and then sits at 100%
+// reads as a hang, which is worse than one that runs slightly long.
+export const LENS_SOURCING_MS = 20000;
 
 // Product Search — real retail results for the selected sources, ranked by each
 // site's best available demand signal (see backend bestsellers.py). Every
@@ -31,6 +41,18 @@ export async function searchBestSellers(query, { sites = [], signal } = {}) {
   const params = new URLSearchParams({ q: query });
   if (sites.length) params.set("sites", sites.join(","));
   const response = await fetch(`${API_BASE}/api/bestsellers?${params.toString()}`, { signal });
+  return handleResponse(response);
+}
+
+// One store's next batch, for its own "find more" button. `have` is how many
+// rows from that store are already on screen, so the backend can skip them.
+//
+// An empty `results` is the normal way a store says it's finished — the caller
+// shows "no more" rather than treating it as a failure. Warnings still travel,
+// because "this store returns everything in one request" is worth knowing.
+export async function findMoreFromStore(query, site, have, { signal } = {}) {
+  const params = new URLSearchParams({ q: query, site, have: String(have) });
+  const response = await fetch(`${API_BASE}/api/bestsellers/more?${params.toString()}`, { signal });
   return handleResponse(response);
 }
 
@@ -105,21 +127,62 @@ export async function searchBestSellersByImage(file, { sites = [], signal } = {}
 // its own browser session per supplier site, so batching would only hide the
 // progress. Products resolve independently and a failure on one leaves the
 // others intact — the same per-source degradation the backend already applies.
-export async function searchManufacturers(products, { mfrSites = [], signal } = {}) {
+// The deep search, cached per product photo and site list — the same trick the
+// fast path uses below, for the same reason, except here it saves minutes rather
+// than seconds. The post-search prefetch now runs this pass too, so by the time
+// the user presses the button the browser sessions have usually already been
+// driven; without a cache the press would drive them all a second time.
+//
+// `settled` is tracked alongside the promise so callers can tell "already
+// fetched" from "still fetching" — findSuppliersByImage uses it to decide
+// whether to announce a slow search or stay quiet. The promise itself never
+// exposes that.
+const _deepCache = new Map();
+
+function _lookupDeep(product, mfrSites) {
+  const key = `${product.image_url}|${mfrSites.join(",")}`;
+  const hit = _deepCache.get(key);
+  if (hit) return hit;
+
+  const params = new URLSearchParams({ image_url: product.image_url });
+  if (mfrSites.length) params.set("sites", mfrSites.join(","));
+  // No signal, deliberately: a cached lookup is shared, so one caller aborting
+  // must not cancel a request another is waiting on. Callers check their own
+  // signal after awaiting.
+  const entry = {
+    settled: false,
+    promise: fetch(`${API_BASE}/api/sourcing/by-url?${params.toString()}`, { method: "POST" })
+      .then(handleResponse)
+      .then((data) => {
+        entry.settled = true;
+        return data;
+      }),
+  };
+  _deepCache.set(key, entry);
+  // Not cached on failure: a browser session that got captcha'd or timed out is
+  // frequently fine on a retry, and the click is the retry.
+  entry.promise.catch(() => _deepCache.delete(key));
+  return entry;
+}
+
+// Whether the deep search for this product still has to be waited on — either
+// never started, or started and not yet back.
+function _deepPending(product, mfrSites) {
+  const hit = _deepCache.get(`${product.image_url}|${mfrSites.join(",")}`);
+  return !hit || !hit.settled;
+}
+
+// `signal` is accepted and ignored: every lookup here is cached and therefore
+// shared, so no single caller may cancel it. Callers check their own signal after
+// awaiting instead.
+export async function searchManufacturers(products, { mfrSites = [] } = {}) {
   const targets = products.filter((p) => p.image_url);
   const skipped = products.length - targets.length;
 
   const settled = await Promise.all(
     targets.map(async (product) => {
-      const params = new URLSearchParams({ image_url: product.image_url });
-      if (mfrSites.length) params.set("sites", mfrSites.join(","));
       try {
-        const response = await fetch(`${API_BASE}/api/sourcing/by-url?${params.toString()}`, {
-          method: "POST",
-          signal,
-        });
-        const data = await handleResponse(response);
-        return { product, data };
+        return { product, data: await _lookupDeep(product, mfrSites).promise };
       } catch (error) {
         if (error.name === "AbortError") throw error;
         return { product, error };
@@ -173,6 +236,216 @@ export async function searchManufacturers(products, { mfrSites = [], signal } = 
   }
 
   return { groups, warnings };
+}
+
+// --- Lens Sourcing (Method 2) ----------------------------------------------
+//
+// The browserless path behind POST /api/find-suppliers: Google Lens finds the
+// product page, Oxylabs opens it for the supplier, price and MOQ. Seconds
+// rather than the minutes searchManufacturers takes, because nothing drives a
+// cloud browser through an upload widget.
+//
+// What it will not do is pretend to be the other pipeline. A Lens row carries
+// no match tier: nothing compared the two products, so `match_basis` is
+// "lens" and the badge says so. Presenting a Lens hit as a verified match
+// would be exactly the confident-looking wrong answer the tiering exists to
+// prevent. See CONTEXT.md's Lens Match Confidence entry.
+
+// SupplierMatch.price is a string when it came from SerpApi untouched, and a
+// {min,max,currency} object when it was read off the supplier's own quantity
+// ladder. The ladder is the honest one — Alibaba's single advertised price is
+// the rate at five thousand units, not at the MOQ.
+const CURRENCY_SYMBOL = { USD: "$", CNY: "¥", EUR: "€", GBP: "£", INR: "₹", RSD: "RSD " };
+
+function formatLensPrice(price) {
+  if (!price) return { text: null, min: null, max: null, currency: null };
+  if (typeof price === "string") return { text: price, min: null, max: null, currency: null };
+  const symbol = CURRENCY_SYMBOL[price.currency] ?? (price.currency ? `${price.currency} ` : "");
+  const money = (n) => `${symbol}${n.toFixed(2)}`;
+  return {
+    text: price.max > price.min ? `${money(price.min)} - ${money(price.max)}` : money(price.min),
+    min: price.min,
+    max: price.max,
+    currency: price.currency ?? null,
+  };
+}
+
+function lensSupplierRow(match) {
+  const price = formatLensPrice(match.price);
+  const contacts = match.contacts ?? null;
+  return {
+    site: match.source,
+    title: match.product_title,
+    product_url: match.product_url,
+    image_url: match.image_url,
+    price_text: price.text,
+    price_min: price.min,
+    price_max: price.max,
+    currency: price.currency,
+    moq: match.moq != null ? String(match.moq) : null,
+    seller_name: match.supplier_name,
+    // What makes the company name clickable in the grid.
+    seller_url: match.supplier_url ?? null,
+    // Provenance, never a tier. "lens" tells MatchBadge to render the Lens
+    // wording instead of borrowing the vision/phash vocabulary.
+    match_basis: "lens",
+    match_tier: match.match_confidence === "lens_exact_match" ? "lens_exact" : "lens_visual",
+    match_note: match.enriched ? null : match.enrichment_error,
+    enriched: match.enriched,
+    // Contacts are only present when the request asked for them; an absent
+    // object means "not looked for", which is distinct from "found none".
+    email: contacts?.emails?.[0] ?? null,
+    phone: contacts?.phones?.[0] ?? null,
+    whatsapp: contacts?.whatsapp?.[0] ?? null,
+    contact_name: contacts?.contact_name ?? null,
+    contacts,
+    rating: null,
+    business_type: null,
+    years_active: null,
+    contact_type: contacts?.emails?.length ? "direct" : "form",
+    contact_value: contacts?.emails?.[0] ?? match.supplier_url ?? match.product_url,
+  };
+}
+
+// Sites the deep-search fallback can actually query. Taobao is a Lens-only
+// source — /api/sourcing/by-url rejects it — so it's dropped here rather than
+// sent along to produce a 400.
+const DEEP_SEARCH_SITES = ["alibaba", "1688", "made_in_china"];
+
+/**
+ * Find suppliers for each chosen product via Lens Sourcing.
+ *
+ * One request per product, like searchManufacturers — each is independent, and
+ * a failure on one leaves the rest intact.
+ *
+ * **Falls back to the deep search when Lens finds no marketplace listing.**
+ * Lens indexes what the web hosts, and for a branded US retail product it
+ * mostly hosts Amazon and Walmart: a live search for Owala, HydroJug and
+ * Mainstays tumblers returned 409 matches and not one on Alibaba, 1688 or
+ * Taobao. That is a real coverage limit, not a bug, and the honest response to
+ * it is not an empty grid — /api/sourcing/by-url searches the marketplaces'
+ * *own* reverse-image indexes and finds listings Lens has never seen. So the
+ * fast path runs first and the slow one covers what it missed, per product.
+ */
+// The fast Lens lookup, cached per product photo rather than per call. This is
+// what makes the silent prefetch after a product search worth running: the
+// prefetch and the user's later click ask for the same products, and without a
+// cache the click would re-request — and re-bill — everything the prefetch had
+// already fetched, arriving no sooner than if nothing had been prefetched.
+//
+// Keyed on the image URL because that is the entire input to the request. The
+// promise is cached, not the result, so a click landing mid-prefetch joins the
+// request in flight instead of starting a second one.
+const _supplierCache = new Map();
+
+function _lookupSuppliers(product, includeContacts) {
+  const key = `${product.image_url}|${includeContacts ? 1 : 0}`;
+  const hit = _supplierCache.get(key);
+  if (hit) return hit;
+
+  // Deliberately not given the caller's `signal`: a cached lookup is shared, so
+  // one caller aborting must not cancel a request another is waiting on. Callers
+  // check their own signal after awaiting (see runSupplierSearch).
+  const promise = fetch(`${API_BASE}/api/find-suppliers`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ image_url: product.image_url, include_contacts: includeContacts }),
+  }).then(handleResponse);
+
+  _supplierCache.set(key, promise);
+  // A failure is never cached: the fast and deep paths use different vendors and
+  // fail independently, so a retry is frequently the fix.
+  promise.catch(() => _supplierCache.delete(key));
+  return promise;
+}
+
+// Drops everything prefetched. Called when a new product search starts, so a
+// stale set of products can't hold memory or serve a previous query's suppliers.
+export function clearSupplierCache() {
+  _supplierCache.clear();
+  _deepCache.clear();
+}
+
+export async function findSuppliersByImage(
+  products,
+  { mfrSites = [], includeContacts = false, signal, deepFallback = true, onDeepSearch } = {}
+) {
+  const targets = products.filter((p) => p.image_url);
+  const skipped = products.length - targets.length;
+
+  const settled = await Promise.all(
+    targets.map(async (product) => {
+      try {
+        return { product, data: await _lookupSuppliers(product, includeContacts) };
+      } catch (error) {
+        if (error.name === "AbortError") throw error;
+        return { product, error };
+      }
+    })
+  );
+
+  const groups = [];
+  const warnings = [];
+  const missed = [];
+  let totalMs = 0;
+  if (skipped > 0) {
+    warnings.push(`${skipped} product(s) had no photo to search with and were skipped.`);
+  }
+
+  for (const { product, data, error } of settled) {
+    if (error) {
+      // A product whose fast search failed outright is still worth the deep
+      // one — the two use different vendors and fail independently.
+      missed.push(product);
+      warnings.push(`[${product.title?.slice(0, 40) ?? "product"}] ${error.message}`);
+      continue;
+    }
+    // Operator-facing faults (bad Oxylabs credentials) travel separately from
+    // ordinary partial-result notes and must not be filtered away as noise.
+    warnings.push(...(data.errors ?? []));
+    warnings.push(...(data.warnings ?? []));
+    totalMs = Math.max(totalMs, data.latency_ms ?? 0);
+
+    let suppliers = (data.results ?? []).map(lensSupplierRow);
+    // The site picker filters what Lens returned rather than what it searched:
+    // Lens has no per-site query to narrow, so narrowing happens here.
+    if (mfrSites.length) suppliers = suppliers.filter((s) => mfrSites.includes(s.site));
+    if (suppliers.length) groups.push({ product, suppliers });
+    else missed.push(product);
+  }
+
+  // `signal` cannot cancel the requests themselves — they are cached and shared,
+  // so no one caller owns them — but it does stop a search the user has already
+  // abandoned from opening a fresh round of browser sessions here.
+  if (deepFallback && missed.length && !signal?.aborted) {
+    const sites = mfrSites.length
+      ? DEEP_SEARCH_SITES.filter((s) => mfrSites.includes(s))
+      : DEEP_SEARCH_SITES;
+    const deepSites = sites.length ? sites : DEEP_SEARCH_SITES;
+    // The deep search takes minutes where the fast one took seconds, so the
+    // caller is told to change its label — a progress bar pinned at 100% for
+    // two minutes reads as a hang, not as a slower search still running.
+    //
+    // Only the products actually being waited on are counted. When the prefetch
+    // has already driven these searches the answers come straight back out of
+    // the cache, and announcing a slow marketplace search that isn't happening
+    // is just a wrong message shown for one frame.
+    const pending = missed.filter((p) => _deepPending(p, deepSites));
+    if (pending.length) onDeepSearch?.(pending.length);
+    const deep = await searchManufacturers(missed, { mfrSites: deepSites });
+    groups.push(...deep.groups);
+    warnings.push(...deep.warnings);
+    warnings.push(
+      deep.groups.length
+        ? `Google Lens found no marketplace listing for ${missed.length} product(s), so those ` +
+          `were searched again against the marketplaces' own image indexes — ${deep.groups.length} ` +
+          `came back with suppliers.`
+        : `Google Lens found no marketplace listing for ${missed.length} product(s), and ` +
+          `searching the marketplaces' own image indexes found none either.`
+    );
+  }
+
+  return { groups, warnings, latencyMs: totalMs };
 }
 
 export async function searchByImage(

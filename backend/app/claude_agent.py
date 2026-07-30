@@ -374,21 +374,25 @@ class VisionVerdict:
         return VISION_TIER.get(self.verdict)
 
 
-def _encode_image(image_bytes: bytes) -> dict | None:
-    """Downscale to a thumbnail and inline it as JPEG.
+def _encode_image(image_bytes: bytes, max_px: int = VISION_THUMB_PX) -> dict | None:
+    """Downscale and inline as JPEG.
 
     Full-resolution catalogue images are several hundred KB each and buy no
-    accuracy for a "is this the same object" judgement, so every image is capped
-    at VISION_THUMB_PX on its long edge before it goes in the request.
+    accuracy for a "is this the same object" judgement, so matching caps at
+    VISION_THUMB_PX. Reading a phone number out of a banner is the opposite
+    task — it is OCR of small text across a wide graphic, and 384px turns it
+    into unreadable mush — so that caller passes a much larger max_px and pays
+    for it. Quality is raised alongside, because JPEG artefacts around small
+    glyphs are exactly what turns an 8 into a 3.
     """
     try:
         from PIL import Image
 
         with Image.open(BytesIO(image_bytes)) as img:
             img = img.convert("RGB")
-            img.thumbnail((VISION_THUMB_PX, VISION_THUMB_PX))
+            img.thumbnail((max_px, max_px))
             buffer = BytesIO()
-            img.save(buffer, format="JPEG", quality=82)
+            img.save(buffer, format="JPEG", quality=92 if max_px > VISION_THUMB_PX else 82)
             data = buffer.getvalue()
     except Exception:
         return None
@@ -534,3 +538,208 @@ async def verify_supplier_matches(
 
 async def _none() -> None:
     return None
+
+
+# ---------------------------------------------------------------------------
+# Agent 3 — supplier contact details, from the page text *and* its pictures
+# ---------------------------------------------------------------------------
+#
+# supplier_profile.py already mines these pages with regex and reports, honestly,
+# that Alibaba suppliers publish no email or phone. That finding is true of the
+# *text*. It is not the whole page.
+#
+# These minisites put contact details in banner graphics, business-card images,
+# certificate scans and "contact us" artwork — partly because a graphic survives
+# the marketplace's own contact-stripping, and partly because it defeats exactly
+# the kind of scraper supplier_profile.py is. A regex cannot read a JPEG. So this
+# agent gets the text *and* the images and transcribes what is visibly there.
+#
+# The overriding rule in the prompt is verbatim transcription. A hallucinated
+# email address is the worst output this codebase could produce: it looks
+# authoritative, a buyer will send real enquiries to it, and nothing downstream
+# can detect that it was invented. Hence "copy character by character", an
+# explicit instruction to return nothing when unsure, and a `legible` flag the
+# model can use to say a graphic was too small to read rather than guess at it.
+
+CONTACT_MAX_IMAGES = 8
+CONTACT_IMAGE_PX = 1100  # contact details are small text in a wide banner
+
+
+_CONTACTS_SYSTEM = """You read a Chinese B2B supplier's own web pages and \
+report the contact details they publish.
+
+You are given the visible text of one or more pages from a single supplier's \
+site, followed by images taken from those same pages. Suppliers on these \
+marketplaces frequently place their real email, phone, WeChat or WhatsApp \
+inside a banner graphic, a business-card image or a certificate scan rather \
+than in the page text, so read the images as carefully as the text.
+
+TRANSCRIBE. DO NOT RECONSTRUCT.
+  * Copy every value character by character exactly as it appears.
+  * Never complete a partial address, correct an apparent typo, expand an \
+abbreviation, or infer a domain from the company's name.
+  * If a value is blurred, cropped, too small or otherwise not clearly legible, \
+leave it out and say so via `unreadable_images`. A missing contact is a minor \
+gap. An invented one is sent real business by a real buyer.
+  * De-obfuscate only mechanical spelling-out that is unambiguous: \
+"sales(at)abc.com" or "sales AT abc DOT com" is sales@abc.com. If you have to \
+guess at any character, omit it.
+
+WHAT COUNTS AS THIS SUPPLIER'S OWN
+  * Exclude the marketplace's addresses and numbers — anything @alibaba.com, \
+@1688.com, @taobao.com, @made-in-china.com, and generic service/support/abuse/ \
+noreply mailboxes. Those appear on every page and belong to the platform.
+  * Exclude numbers that are not phone numbers: copyright year ranges, screen \
+resolutions, ICP licence numbers, business registration numbers, product model \
+numbers, prices and dimensions. If a digit string is not labelled or presented \
+as a way to contact a person, do not report it as one.
+  * A WeChat ID is usually labelled 微信 or "WeChat" and is an id, not a number.
+
+For every value you report, set `source` to "text" if you read it in the page \
+text, or "image" if you read it in one of the pictures.
+
+Return empty lists when the pages publish nothing. That is a normal and \
+frequent outcome for these sites, and it is a useful answer — do not pad it."""
+
+_CONTACTS_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "emails": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "value": {"type": "string"},
+                    "source": {"type": "string", "enum": ["text", "image"]},
+                },
+                "required": ["value", "source"],
+                "additionalProperties": False,
+            },
+        },
+        "phones": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "value": {"type": "string"},
+                    "source": {"type": "string", "enum": ["text", "image"]},
+                },
+                "required": ["value", "source"],
+                "additionalProperties": False,
+            },
+        },
+        "whatsapp": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "value": {"type": "string"},
+                    "source": {"type": "string", "enum": ["text", "image"]},
+                },
+                "required": ["value", "source"],
+                "additionalProperties": False,
+            },
+        },
+        "wechat": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "value": {"type": "string"},
+                    "source": {"type": "string", "enum": ["text", "image"]},
+                },
+                "required": ["value", "source"],
+                "additionalProperties": False,
+            },
+        },
+        "contact_name": {"type": "string"},
+        "unreadable_images": {"type": "integer"},
+    },
+    "required": ["emails", "phones", "whatsapp", "wechat", "contact_name", "unreadable_images"],
+    "additionalProperties": False,
+}
+
+
+@dataclass
+class ContactFindings:
+    emails: list[tuple[str, str]] = field(default_factory=list)  # (value, source)
+    phones: list[tuple[str, str]] = field(default_factory=list)
+    whatsapp: list[tuple[str, str]] = field(default_factory=list)
+    wechat: list[tuple[str, str]] = field(default_factory=list)
+    contact_name: str | None = None
+    unreadable_images: int = 0
+
+
+async def read_supplier_contacts(
+    company: str,
+    page_texts: list[str],
+    image_bytes: list[bytes],
+) -> tuple[ContactFindings | None, list[str]]:
+    """Read one supplier's pages and pictures for publishable contact details.
+
+    Returns (findings, warnings). `None` findings means the agent never ran or
+    failed — which the caller must report as "could not look", never as "this
+    supplier publishes nothing". The two are different facts and a buyer acts
+    on them differently.
+    """
+    if not is_configured():
+        return None, []
+    if not page_texts and not image_bytes:
+        return None, []
+
+    content: list[dict] = [
+        {
+            "type": "text",
+            "text": (
+                f"Supplier: {company or 'unknown'}\n\n"
+                "Visible text of this supplier's pages:\n\n"
+                + "\n\n--- next page ---\n\n".join(t[:14000] for t in page_texts[:4])
+            ),
+        }
+    ]
+
+    encoded = 0
+    for index, raw in enumerate(image_bytes[:CONTACT_MAX_IMAGES]):
+        block = _encode_image(raw, max_px=CONTACT_IMAGE_PX)
+        if block is None:
+            continue
+        content.append({"type": "text", "text": f"Image {index} from this supplier's pages:"})
+        content.append(block)
+        encoded += 1
+
+    if not page_texts and not encoded:
+        return None, []
+
+    try:
+        data = await _ask(
+            content,
+            _CONTACTS_SCHEMA,
+            _CONTACTS_SYSTEM,
+            # Reading small text out of a banner and deciding whether a digit
+            # string is a phone number are both judgement calls; this is not a
+            # task to run cheap.
+            effort="medium",
+            max_tokens=4000,
+        )
+    except Exception as e:  # noqa: BLE001 - a failed agent degrades one supplier
+        return None, [f"Contact reading failed for {company or 'a supplier'}: {e}"]
+
+    def _pairs(key: str) -> list[tuple[str, str]]:
+        out: list[tuple[str, str]] = []
+        for entry in data.get(key) or []:
+            if isinstance(entry, dict) and entry.get("value"):
+                out.append((str(entry["value"]).strip()[:120], str(entry.get("source", "text"))))
+        return out
+
+    name = (data.get("contact_name") or "").strip()
+    return (
+        ContactFindings(
+            emails=_pairs("emails"),
+            phones=_pairs("phones"),
+            whatsapp=_pairs("whatsapp"),
+            wechat=_pairs("wechat"),
+            contact_name=name[:80] or None,
+            unreadable_images=int(data.get("unreadable_images") or 0),
+        ),
+        [],
+    )

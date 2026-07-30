@@ -143,6 +143,11 @@ class Discovery:
     inline_html: str | None = None
     warnings: list[str] = field(default_factory=list)
     session_id: str | None = None
+    # True when this attempt failed for a reason a fresh session cannot change —
+    # the upload widget's file input simply isn't on the page. Retrying that
+    # burns three cloud browser sessions to reach the identical dead end. See
+    # `discover`.
+    structural: bool = False
 
     @property
     def ok(self) -> bool:
@@ -260,6 +265,13 @@ async def _attempt(recipe: Recipe, image_bytes: bytes, content_type: str) -> Dis
             await bb.attach_file(rb, recipe.file_input, remote_path)
         except Exception as e:
             d.warnings.append(f"[{recipe.label}] file attach failed: {e}")
+            # "No file input matched '…'" means the selector in this recipe is
+            # not on the page — a changed layout, an A/B variant, or a recipe
+            # that was never right. A new IP and a new fingerprint land on the
+            # same page and fail identically, so this is not worth two more
+            # sessions. Anything else here (a timeout mid-upload, a dropped
+            # connection) is transient and keeps its retries.
+            d.structural = "no file input matched" in str(e).lower()
             return d
 
         if recipe.results_pattern is not None:
@@ -318,6 +330,20 @@ async def discover(site: str, image_bytes: bytes, content_type: str) -> Discover
         if d.ok:
             d.warnings = warnings
             return d
+        if d.structural:
+            # Stop now. Each further attempt is a fresh cloud browser — session
+            # create, navigate, widget open, timeout — for a page whose upload
+            # input this recipe cannot find. Measured on a live run: 1688 and
+            # Made-in-China spent three full sessions per product reaching the
+            # same "No file input matched" every time, on every product in the
+            # search. That is the bulk of a slow sourcing run and none of it
+            # could ever have succeeded.
+            warnings.append(
+                f"[{recipe.label}] this site's upload form has changed shape — its "
+                "recipe needs updating. Skipped rather than retried, since a retry "
+                "reaches the same page."
+            )
+            return Discovery(site=site, warnings=warnings)
         if attempt < MAX_UPLOAD_ATTEMPTS:
             warnings.append(f"[{recipe.label}] retrying upload ({attempt}/{MAX_UPLOAD_ATTEMPTS})")
 

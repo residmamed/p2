@@ -4,7 +4,7 @@ export const SITES = [
   { id: "made_in_china", label: "Made-in-China", color: "#c0111a" },
 ];
 
-// Product Search sources. Exactly the five the backend can actually reach —
+// Product Search sources. Exactly the twelve the backend can actually reach —
 // listing a site here that bestsellers.py can't serve would promise a source
 // the app never returns. See backend/app/bestsellers.py SITES.
 export const BESTSELLER_SITES = [
@@ -13,14 +13,41 @@ export const BESTSELLER_SITES = [
   { id: "temu", label: "Temu", color: "#fb7701" },
   { id: "costco", label: "Costco", color: "#e31837" },
   { id: "ikea", label: "IKEA", color: "#0058a3" },
+  // Added once each had a live Apify actor behind it — see
+  // backend/app/apify_retail.py, which records what every one of them returns.
+  { id: "target", label: "Target", color: "#cc0000" },
+  { id: "ebay", label: "eBay", color: "#e53238" },
+  { id: "etsy", label: "Etsy", color: "#f56400" },
+  { id: "wayfair", label: "Wayfair", color: "#7b189f" },
+  { id: "bestbuy", label: "Best Buy", color: "#0046be" },
+  { id: "homedepot", label: "Home Depot", color: "#f96302" },
+  // Not a store: the keyword is answered by picture, via Pinterest images run
+  // through Google Lens, then narrowed to the listings whose titles describe
+  // what was searched for. See backend/app/google_shopping.py. It sits with the
+  // stores because it is picked the same way — a source pill on Product Search.
+  { id: "google_shopping", label: "Google Shopping", color: "#4285f4" },
 ];
+
+// Stores on the roadmap, shown so the range is visible but marked and not
+// selectable — the backend has no scraper for any of them, and a pill that
+// selects a source the search can't reach returns an empty store with an
+// excuse. Clicking one says "coming soon" instead. Move an entry up into
+// BESTSELLER_SITES the day bestsellers.py can serve it, and not before.
+export const COMING_SOON_SITES = [];
+
+// What the Product Search store picker renders: the live five, then the rest.
+export const PRODUCT_SEARCH_SITES = [...BESTSELLER_SITES, ...COMING_SOON_SITES];
 
 // Manufacturer sources — where the "Search for manufacturers" button pulls
 // supplier listings from, for the products the user picks.
+// The marketplaces Lens Sourcing can return. Taobao is included because Google
+// Lens does surface it, even though only Alibaba and 1688 get enriched with a
+// supplier name, price and MOQ — a Taobao row arrives on Lens data alone and
+// says so on the row rather than being dropped.
 export const MANUFACTURER_SITES = [
   { id: "alibaba", label: "Alibaba", color: "#ff6a00" },
   { id: "1688", label: "1688", color: "#ff5000" },
-  { id: "made_in_china", label: "Made-in-China", color: "#c0111a" },
+  { id: "taobao", label: "Taobao", color: "#ff4400" },
 ];
 
 // Not a filterable scraper site (so it's kept out of SITES/SiteFilter) — Google
@@ -32,7 +59,7 @@ const EXTRA_BADGES = {
   google_lens_extension: { label: "Google Lens (Browser)", color: "#673ab7" },
 };
 
-const ALL_SITES = [...SITES, ...BESTSELLER_SITES, ...MANUFACTURER_SITES];
+const ALL_SITES = [...SITES, ...BESTSELLER_SITES, ...COMING_SOON_SITES, ...MANUFACTURER_SITES];
 export const SITE_LABELS = {
   ...Object.fromEntries(ALL_SITES.map((s) => [s.id, s.label])),
   ...Object.fromEntries(Object.entries(EXTRA_BADGES).map(([id, b]) => [id, b.label])),
@@ -72,7 +99,6 @@ const URL_SITE_PATTERNS = [
   ["target.", "target"],
   ["ebay.", "ebay"],
   ["etsy.", "etsy"],
-  ["shein.", "shein"],
   ["wayfair.", "wayfair"],
   ["bestbuy.", "bestbuy"],
   ["homedepot.", "homedepot"],

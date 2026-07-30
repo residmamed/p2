@@ -26,6 +26,7 @@ from urllib.parse import quote_plus
 from . import (
     apify_retail,
     claude_agent,
+    google_shopping,
     product_page_enrich,
     rainforest,
     retail_browser,
@@ -78,6 +79,10 @@ class SiteConfig:
     # walmart engines (app/serpapi_retail.py), each asked for the site's own
     # best-selling sort. Falls back to Rainforest (Amazon) or the Zyte path.
     via_api: bool = False
+    # Not a store at all: the keyword is answered by picture, via Pinterest
+    # images run through Google Lens (app/google_shopping.py). Has no fallback
+    # transport, because no other transport can answer the same question.
+    via_google_shopping: bool = False
     # Site ships its full search model as embedded page JSON, which productList
     # doesn't surface. Where set, the Zyte fallback reads products from that
     # blob and uses productList only to price them. See _fetch_walmart_via_zyte.
@@ -98,7 +103,9 @@ class SiteConfig:
 #
 #   * Amazon and Walmart both honour a real best-selling sort in a plain URL
 #     (the top of the Amazon list becomes Owala/Stanley, which are in fact the
-#     best sellers). Those two are the only Tier-1 sources.
+#     best sellers). Target and Home Depot joined them later, through actors
+#     whose input schemas expose the stores' own sorts (sort=bestselling and
+#     sortBy=top_sellers); those four are the Tier-1 sources.
 #   * Zyte returns 0 products for Temu and HTTP 520 "Website Ban" for Costco in
 #     every extraction mode, so both are routed through Browserbase.
 #
@@ -173,6 +180,84 @@ SITES: dict[str, SiteConfig] = {
         # schema.org JSON-LD with aggregateRating. Affordable here precisely
         # because IKEA returns only a handful of results per query.
         ratings_from_product_page=True,
+    ),
+
+    # The six below all run through app/apify_retail.py. Each rank_basis was
+    # decided by what the actor's input schema actually offers, not by what the
+    # store claims to support — see that module's table.
+    "target": SiteConfig(
+        "target", "Target",
+        "https://www.target.com/s?searchTerm={q}&sortBy=bestselling",
+        # Target's actor takes sort=bestselling and honours it: the probe put
+        # Owala first for "water bottle", which is the genuine best seller.
+        rank_basis="bestseller_sort",
+        via_apify=True,
+    ),
+    "homedepot": SiteConfig(
+        "homedepot", "Home Depot",
+        "https://www.homedepot.com/s/{q}",
+        # sortBy=top_sellers, Home Depot's own ordering. This site publishes no
+        # rating in search results, so the sort is the only signal it offers —
+        # and it's a stronger one than a rating would have been.
+        rank_basis="bestseller_sort",
+        via_apify=True,
+    ),
+    "ebay": SiteConfig(
+        "ebay", "eBay",
+        "https://www.ebay.com/sch/i.html?_nkw={q}",
+        # eBay's sort enum has no best-selling option, and the actor's soldCount
+        # field came back empty on every probed row. Its ratings are seller
+        # feedback across all of a seller's sales, not this product's rating, so
+        # there is nothing here but page order — and it says so.
+        rank_basis="relevance",
+        via_apify=True,
+    ),
+    "etsy": SiteConfig(
+        "etsy", "Etsy",
+        "https://www.etsy.com/search?q={q}",
+        # Etsy's actor returns a rating with no review count at all, so a
+        # rating-based ordering here would rank a 5.0 backed by nothing above a
+        # 4.7 backed by thousands. Left on relevance for the same reason Costco
+        # is: the rating still travels on the row and still feeds the
+        # Opportunity Score, it just doesn't reshuffle the grid.
+        rank_basis="relevance",
+        via_apify=True,
+    ),
+    "bestbuy": SiteConfig(
+        "bestbuy", "Best Buy",
+        "https://www.bestbuy.com/site/searchpage.jsp?st={q}",
+        # The actor takes only startUrls — no sort parameter of any kind — so
+        # whatever Best Buy's search returns first is what's shown. Ratings and
+        # review counts are real and complete here; they just aren't a ranking
+        # Best Buy made, so they don't reorder the grid (see Costco).
+        rank_basis="relevance",
+        via_apify=True,
+    ),
+    "wayfair": SiteConfig(
+        "wayfair", "Wayfair",
+        "https://www.wayfair.com/keyword.php?keyword={q}",
+        # Same as Best Buy: startUrls only, no sort. Wayfair had the most
+        # complete data of the six — price, rating and review count on every
+        # probed row.
+        rank_basis="relevance",
+        via_apify=True,
+    ),
+
+    # Not a store. The keyword goes to Pinterest, the images Pinterest returns go
+    # to Google Lens, and what comes back is whatever the web is selling that
+    # looks like them — then filtered down to the listings whose titles actually
+    # describe the keyword. See app/google_shopping.py; the search_url below is
+    # only for a human following the row back to something familiar.
+    #
+    # relevance is not a fallback here, it is the truth: nothing in this chain
+    # ranks anything. Lens returns visual similarity, which says nothing about
+    # what sells, so these rows carry the lowest confidence weight in the merge
+    # and are labelled accordingly rather than being mixed in as best sellers.
+    "google_shopping": SiteConfig(
+        "google_shopping", "Google Shopping",
+        "https://www.google.com/search?tbm=shop&q={q}",
+        rank_basis="relevance",
+        via_google_shopping=True,
     ),
 }
 ALL_SITES = list(SITES.keys())
@@ -359,6 +444,17 @@ class SiteResult:
 
 async def _fetch_site(site: SiteConfig, query: str, zyte: ZyteClient) -> SiteResult:
     """Fetch one site's results, through whichever transport actually reaches it."""
+    if site.via_google_shopping:
+        # Deliberately no fallback: every other transport here answers a keyword
+        # by querying a store, which is the one thing this source doesn't do.
+        # Falling through to Zyte would return a different question's answer.
+        products, warnings = await google_shopping.search(query)
+        if not products:
+            return SiteResult(warnings=warnings)
+        for pos, p in enumerate(products, start=1):
+            p.site_rank = pos
+        return SiteResult(products=products, warnings=warnings + _assign_normalized_scores(products, site))
+
     if site.via_api:
         products, warnings = await _fetch_via_api(site, query)
         if products:
@@ -922,6 +1018,92 @@ def parse_sites(sites: str | None) -> list[str]:
     if unknown:
         raise ValueError(f"Unknown site(s): {', '.join(unknown)}. Valid: {', '.join(ALL_SITES)}")
     return requested or ALL_SITES
+
+
+# --- "Find more", per store ------------------------------------------------
+#
+# Each store gets its own button, because "more" means something different at
+# each one and only the store itself can say whether it has any: Target can open
+# another page of its best-selling sort, IKEA returns nine results in total and
+# is simply finished. A single global "more" would have to average those into one
+# answer and would be wrong at both ends.
+#
+# Two of the three transports can be asked for a deeper slice:
+#
+#   via_apify   Ask the actor for `have + MORE_BATCH` rows and return the tail.
+#               No actor here accepts an offset, so the earlier rows are fetched
+#               (and billed) again — which is why this is a button and not
+#               something the app does on its own.
+#   via_api     SerpApi walks the same best-selling sort by page. Rainforest is
+#               skipped on this path: it has no page parameter, so pretending
+#               otherwise would re-return page 1 as though it were page 2.
+#
+# Zyte's productList has no page parameter either, which leaves IKEA — the only
+# site that needs one — honestly out of rows rather than quietly repeating them.
+MORE_BATCH = 24
+# A ceiling on how deep the button can go. Every press past the first refetches
+# everything before it, so the cost of pressing it grows while the number of new
+# rows stays flat; past this depth the store is better re-queried than paged.
+MORE_MAX_DEPTH = 150
+
+
+async def more_from_site(query: str, site_id: str, have: int) -> SearchResponse:
+    """The next batch of results from ONE store, excluding the `have` already
+    shown. An empty `results` means that store has no more to give — the caller
+    shows "no more" rather than an error, because being finished is not a fault.
+    """
+    site = SITES[site_id]
+    have = max(0, have)
+
+    if have >= MORE_MAX_DEPTH:
+        return SearchResponse(results=[], warnings=[
+            f"[{site.label}] Stopped at {have} results — deeper paging costs more "
+            f"each time and returns less. Narrow the keyword instead."
+        ])
+
+    want = have + MORE_BATCH
+
+    if site.via_apify:
+        products, warnings = await apify_retail.fetch_site(site_id, query, max_items=want)
+    elif site.via_api and site_id in serpapi_retail.SUPPORTED_SITES:
+        # Page numbering is 1-based, and `have` rows have already been shown.
+        page = have // MORE_BATCH + 1
+        try:
+            products, warnings = await serpapi_retail.search(site_id, query, page=page)
+        except serpapi_retail.SerpApiError as e:
+            return SearchResponse(results=[], warnings=[f"[{site.label}] {e}"])
+        # A page request returns only that page, so nothing has been seen before.
+        have = 0
+    else:
+        return SearchResponse(results=[], warnings=[
+            f"[{site.label}] This store returns its whole result set in one "
+            f"request, so there is nothing further to fetch."
+        ])
+
+    if not products:
+        return SearchResponse(results=[], warnings=warnings)
+
+    # Site Rank and Normalized Score are both defined relative to a store's own
+    # result set, so they're assigned over everything fetched and only then
+    # sliced. Scoring the tail on its own would restart the 0-1 scale partway
+    # down the list, making row 41 look as strong as row 1.
+    for pos, p in enumerate(products, start=1):
+        p.site_rank = pos
+    warnings = warnings + _assign_normalized_scores(products, site)
+
+    fresh = _dedupe_within_site(products)[have:]
+    if not fresh:
+        return SearchResponse(results=[], warnings=warnings)
+
+    # Same screening as the first page: without it the extra rows are exactly the
+    # accessories and unrelated stock the main search filtered out, since the
+    # further down a result list you go the less of it answers the query.
+    if settings.claude_relevance_filter:
+        screened = await claude_agent.filter_by_relevance(query, fresh)
+        fresh = screened.kept
+        warnings.extend(screened.warnings)
+
+    return SearchResponse(results=fresh, warnings=warnings)
 
 
 async def best_seller_search(

@@ -41,11 +41,13 @@ export async function exportProductsToExcel(products, filename = "products.xlsx"
   const workbook = new ExcelJS.Workbook();
   const sheet = workbook.addWorksheet("Products");
 
+  // No phone column: supplier phone numbers aren't shown in the UI, and an
+  // export that carried them would put back on a spreadsheet exactly what was
+  // taken off the screen.
   sheet.columns = [
     { header: "Image", key: "image", width: 18 },
     { header: "Name", key: "name", width: 50 },
     { header: "Company", key: "seller", width: 34 },
-    { header: "Phone", key: "phone", width: 22 },
     { header: "Price", key: "price", width: 18 },
     { header: "MOQ", key: "moq", width: 16 },
   ];
@@ -55,11 +57,9 @@ export async function exportProductsToExcel(products, filename = "products.xlsx"
 
   products.forEach((product, i) => {
     const rowNumber = i + 2;
-    const phone = product.phone || (product.contact_type === "direct" ? product.contact_value : "") || "";
     const row = sheet.addRow({
       name: product.title || "",
       seller: sellerLabel(product),
-      phone,
       price: product.price_text || "",
       moq: product.moq || "",
     });

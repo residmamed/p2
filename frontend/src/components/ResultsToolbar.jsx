@@ -1,5 +1,5 @@
 import { useI18n } from "../i18n";
-import { parsePrice } from "../productMetrics";
+import { parsePrice, ratingConfidenceScore } from "../productMetrics";
 import "./ResultsToolbar.css";
 
 export const DEFAULT_FILTERS = {
@@ -49,7 +49,10 @@ export function applyResultFilters(products, filters) {
   const keyFor = {
     priceAsc: (p) => parsePrice(p.price_text),
     priceDesc: (p) => parsePrice(p.price_text),
-    rating: (p) => p.rating ?? null,
+    // Not the raw star value — the pessimistic end of a confidence interval
+    // around it, so a rating only ranks as high as its review count can
+    // justify. See ratingConfidenceScore.
+    rating: ratingConfidenceScore,
     reviews: (p) => p.review_count ?? null,
   }[f.sort];
   if (!keyFor) return out;
@@ -62,7 +65,11 @@ export function applyResultFilters(products, filters) {
     if (ka == null && kb == null) return 0;
     if (ka == null) return 1;
     if (kb == null) return -1;
-    return desc ? kb - ka : ka - kb;
+    if (ka !== kb) return desc ? kb - ka : ka - kb;
+    // Equal weighted scores: the better-evidenced listing goes first, so the
+    // order stays explainable instead of falling back to arrival order.
+    if (f.sort === "rating") return (b.review_count ?? 0) - (a.review_count ?? 0);
+    return 0;
   });
 }
 

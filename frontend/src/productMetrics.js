@@ -78,6 +78,50 @@ export function marketSnapshot(products) {
   };
 }
 
+// Ranking by the star value alone is a lie the review count can expose: a lone
+// 5.0 from two buyers outranks a 4.7 backed by twenty thousand, so the grid
+// leads with exactly the listings we know least about. What the sort should
+// answer is not "who has the highest average?" but "whose rating would still
+// hold up if more people bought it?"
+//
+// That's the lower bound of a confidence interval on the rating, scored with
+// the Wilson interval. The star average is read as a share of a perfect score
+// (4.7 of 5 -> p = 0.925), and the sort ranks the *pessimistic* end of the
+// interval around it: the more reviews behind a rating, the tighter the
+// interval and the less it is marked down.
+//
+//   4.7 x 21,000 reviews  ->  scores just under 4.7   (nothing left to doubt)
+//   5.0 x 2 reviews       ->  scores far below it     (two buyers prove little)
+//
+// The Bayesian/IMDb shrinkage toward a set average was tried first and is the
+// wrong instrument for this grid: when the set's mean rating lands near the
+// best-evidenced listing's own rating, every score collapses into a near-tie
+// and the unproven 5.0 edges ahead on upside — the original complaint, intact.
+// A confidence bound has no such degenerate case; it rises monotonically with
+// review count, so more evidence can only ever help a listing.
+const Z = 1.96; // 95% confidence
+const RATING_SCALE = 5;
+
+// Wilson lower bound for a rating, in the original star units so the number
+// stays legible next to the rating it came from. null for listings with no
+// rating at all — no evidence in either direction, left for the caller to place.
+export function ratingConfidenceScore(product) {
+  const rating = product.rating;
+  if (rating == null) return null;
+
+  const n = product.review_count != null && product.review_count > 0 ? product.review_count : 0;
+  // A rating published with no review count behind it is an unsupported claim.
+  // Scored at the floor rather than dropped: it stays in the grid, below every
+  // listing that can show its work, and above the entirely unrated.
+  if (n === 0) return 0;
+
+  const p = Math.min(1, Math.max(0, rating / RATING_SCALE));
+  const z2 = Z * Z;
+  const lower =
+    (p + z2 / (2 * n) - Z * Math.sqrt((p * (1 - p)) / n + z2 / (4 * n * n))) / (1 + z2 / n);
+  return lower * RATING_SCALE;
+}
+
 export function formatUSD(v, { compact = false } = {}) {
   if (v == null || !Number.isFinite(v)) return "—";
   if (compact && Math.abs(v) >= 1000) return `$${(v / 1000).toFixed(1)}k`;

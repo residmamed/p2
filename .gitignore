@@ -14,6 +14,11 @@ __pycache__/
 .pytest_cache/
 dist/
 
+# The Google Lens result cache (app/lens_cache.py). Regenerable by re-running
+# the search, 30-day TTL, and every entry costs SerpApi quota to refill — worth
+# keeping on disk between runs, not worth committing.
+backend/.cache/
+
 # CLIP's ViT-B-32.pt is 338 MB — past GitHub's hard 100 MB per-file limit, so
 # it cannot be pushed without Git LFS. Downloaded on first run.
 backend/weights/
