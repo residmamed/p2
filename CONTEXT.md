@@ -88,11 +88,11 @@ A single row in the Best Seller Search results representing one product, made up
 A short-TTL, query-keyed cache of Best Seller Search results. A query is served from cache when fresh, or triggers a live re-scrape on expiry/miss.
 
 **Opportunity Score**:
-A 0–100 workbench composite shown on retail product cards, answering "is this listing worth my attention within this result set?": 40% demand (log-scaled review count), 38% quality (rating), 22% value (price vs the set's median), each normalized against the same search's results. Products with no rating *and* no reviews (e.g. Pinterest pins) are unscoreable and show no chip — never a fake midpoint.
+A 0–100 workbench composite shown on retail product cards, answering "is this listing worth my attention within this result set?": 40% demand (log-scaled review count), 38% quality (rating), 22% value (price vs the set's median), each normalized against the same search's results. Products with no rating *and* no reviews (e.g. Pinterest pins) are unscoreable and show no chip — never a fake midpoint. One missing input alone doesn't disqualify a listing: the weights renormalize over what it has, because a price the store declined to publish is not evidence of bad value. Implemented in `productMetrics.js` (`opportunityScores`) and rendered by `ProductMetrics.jsx` under the product name, behind the **Show metrics** toggle. Scored over the whole result set rather than the filtered view, so refining the grid never restates a score.
 _Avoid_: Popularity Score (that's the Best Seller Search ranking fallback, a different formula)
 
-**Pipeline**:
-The persistent per-browser shortlist of saved products, organized as five stages: Researching → Contacted → Sampling → Approved / Dropped. Items carry notes, tags, a target unit cost and the query they came from. Lives in localStorage (`p2_shortlist`) — the app still has no database.
+**Pipeline** *(designed, not implemented)*:
+The persistent per-browser shortlist of saved products, organized as five stages: Researching → Contacted → Sampling → Approved / Dropped. Items carry notes, tags, a target unit cost and the query they came from. Intended to live in localStorage (`p2_shortlist`) — the app still has no database. **Nothing of this exists in the code yet**: no `useShortlist`, no `PipelineView`, no bookmark control on a card. The term is kept here so the vocabulary is settled before it is built.
 _Avoid_: Shortlist, watchlist, favorites
 
 **Market Snapshot**:
@@ -102,5 +102,5 @@ The at-a-glance stats panel above search results: median price, price range and 
 Product Search's image entry point, launched from a camera icon *inside* the search bar (there is no separate Text/Photo mode toggle anymore). It runs the **real** Google Lens API — `searchBestSellersByImage` always hits the backend `/api/trending/search-lens` endpoint (the Apify `borderline~google-lens` actor), never the mock path, even though text search stays mocked. Each Lens hit's destination URL is mapped to a retail site (`siteForUrl`); the exact-match hits on the currently-selected sites are surfaced first (re-tagged to that site), and when those sites yield no exact match the 5 closest visual matches are shown instead — signalled to the UI via `lensMode` of `"exact"` or `"similar"`. Requires the backend running with `APIFY_TOKEN`.
 _Avoid_: the old "AI Best Match" showcase — that feature has been removed.
 
-**Margin Assumptions**:
-The user's persisted per-unit cost model (freight $, duty %, channel fee %, fulfillment $) used by the Margin Calculator and the Est. margin column on supplier rows. Editable everywhere; "Save as my defaults" makes the edited values the new baseline.
+**Margin Assumptions** *(designed, not implemented)*:
+The user's persisted per-unit cost model (freight $, duty %, channel fee %, fulfillment $) intended to drive a Margin Calculator and an Est. margin column on supplier rows. **No margin math, hook or component exists yet** — `productMetrics.js` carries no landed-cost model. Kept as settled vocabulary, not as a description of the app.

@@ -110,10 +110,31 @@ def _variants(word: str) -> set[str]:
     mode for a gate whose whole job is deciding whether two short strings talk
     about the same thing, and singular/plural is the only inflection that
     actually shows up between a search box and a product title.
+
+    Both directions have to be generated, not just one. Returning only
+    {word, word[:-1]} for anything ending in "s" meant a singular query never
+    reached its own "-es" plural: "glass" produced {"glass", "glas"}, never
+    "glasses", so the head-noun gate below dropped every listing for the thing
+    the user actually searched. The same silently emptied dishes, boxes and
+    brushes -- whole categories answering with nothing while the warning blamed
+    the source imagery.
     """
-    if len(word) > 3 and word.endswith("s"):
-        return {word, word[:-1]}
-    return {word, word + "s"}
+    forms = {word}
+    if word.endswith("es") and len(word) > 4:
+        # Already plural. "-es" is ambiguous -- "dishes" drops two letters,
+        # "glasses" drops one -- so both stems are offered and the caller's set
+        # intersection picks whichever is a real word in the other string.
+        forms |= {word[:-2], word[:-1]}
+    elif word.endswith("s") and len(word) > 3:
+        # Ambiguous the other way: "lamps" is a plural, "glass" is a singular
+        # that pluralises to "glasses". Offer both readings.
+        forms |= {word[:-1], word + "es"}
+    else:
+        # Sibilant endings take "-es" ("box" -> "boxes", "brush" -> "brushes");
+        # everything else takes "-s". Getting this wrong produced "boxs", which
+        # matches nothing.
+        forms.add(word + ("es" if word.endswith(("x", "ch", "sh")) else "s"))
+    return forms
 
 
 def describes(query: str, title: str) -> bool:

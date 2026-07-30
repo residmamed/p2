@@ -1,5 +1,5 @@
 import { useI18n } from "../i18n";
-import { parsePrice, ratingConfidenceScore } from "../productMetrics";
+import { opportunityScores, parsePrice, pricePerOz, ratingConfidenceScore } from "../productMetrics";
 import "./ResultsToolbar.css";
 
 export const DEFAULT_FILTERS = {
@@ -14,7 +14,7 @@ export const DEFAULT_FILTERS = {
 const RATING_STOPS = [0, 3, 4, 4.5];
 
 // Which sorts are descending; everything else ascending.
-const DESC_SORTS = new Set(["priceDesc", "rating", "reviews"]);
+const DESC_SORTS = new Set(["priceDesc", "rating", "reviews", "opportunity"]);
 
 // Pure filter + sort over a product result set. Never mutates the input.
 export function applyResultFilters(products, filters) {
@@ -46,6 +46,18 @@ export function applyResultFilters(products, filters) {
 
   if (f.sort === "default") return out;
 
+  // Opportunity is cohort-relative, so it is scored over the WHOLE input set
+  // rather than the filtered survivors — otherwise narrowing the grid would
+  // silently restate every score, and a card would disagree with the sort that
+  // placed it. Keyed by object identity, which holds: `out` is a filtered view
+  // of these same objects.
+  let opportunityByProduct = null;
+  if (f.sort === "opportunity") {
+    opportunityByProduct = new Map();
+    const scored = opportunityScores(list);
+    list.forEach((p, i) => opportunityByProduct.set(p, scored[i]?.score ?? null));
+  }
+
   const keyFor = {
     priceAsc: (p) => parsePrice(p.price_text),
     priceDesc: (p) => parsePrice(p.price_text),
@@ -54,6 +66,10 @@ export function applyResultFilters(products, filters) {
     // justify. See ratingConfidenceScore.
     rating: ratingConfidenceScore,
     reviews: (p) => p.review_count ?? null,
+    // Cheapest per fluid ounce first. Listings whose title never stated a size
+    // key as null and sort to the end rather than being dropped.
+    perOz: pricePerOz,
+    opportunity: (p) => opportunityByProduct.get(p) ?? null,
   }[f.sort];
   if (!keyFor) return out;
 
@@ -101,6 +117,8 @@ export default function ResultsToolbar({ filters, onChange, shownCount, totalCou
         <option value="priceDesc">{t("rtSortPriceDesc")}</option>
         <option value="rating">{t("rtSortRating")}</option>
         <option value="reviews">{t("rtSortReviews")}</option>
+        <option value="opportunity">{t("rtSortOpportunity")}</option>
+        <option value="perOz">{t("rtSortPerOz")}</option>
       </select>
 
       <span className="rt-price-wrap">

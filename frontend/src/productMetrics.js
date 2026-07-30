@@ -62,9 +62,16 @@ export function marketSnapshot(products) {
     .map(([site, count]) => ({ site, count, pct: list.length ? count / list.length : 0 }))
     .sort((a, b) => b.count - a.count);
 
+  // Unit price, over only the listings whose title actually stated a size.
+  // `perOzCount` travels with it so the tile can say what it is based on — a
+  // median over 3 of 42 listings is a different claim from one over all 42.
+  const perOzValues = list.map((p) => pricePerOz(p)).filter((v) => v != null);
+
   return {
     count: list.length,
     pricedCount: prices.length,
+    medianPerOz: median(perOzValues),
+    perOzCount: perOzValues.length,
     minPrice: prices.length ? Math.min(...prices) : null,
     maxPrice: prices.length ? Math.max(...prices) : null,
     medianPrice: median(prices),
@@ -241,4 +248,91 @@ export function opportunityScores(products) {
       basis: parts.map(([k]) => k),
     };
   });
+}
+
+// --- Unit-price normalization ($/oz) ---------------------------------------
+// A 40oz tumbler at $34.99 and a 24oz at $24.99 cannot be compared on sticker
+// price, which is exactly the comparison the Market Snapshot exists to support.
+// The size is almost always in the title, because that is where these stores
+// put it, so it is parsed from there rather than fetched.
+//
+// Conservative by design: anything ambiguous returns null and the listing shows
+// no unit price at all. A wrong $/oz is worse than none — it silently reorders
+// the grid and the user has no way to see that the parse misfired.
+
+// Volume units normalized to fluid ounces. Weight (oz/lb/g) is deliberately
+// NOT converted into the same scale: an ounce of coffee and a fluid ounce of
+// water are different quantities, and pooling them would produce a column that
+// compares mass to volume.
+const VOLUME_TO_OZ = {
+  oz: 1,
+  "fl oz": 1,
+  ounce: 1,
+  ounces: 1,
+  ml: 0.033814,
+  l: 33.814,
+  liter: 33.814,
+  litre: 33.814,
+  liters: 33.814,
+  qt: 32,
+  quart: 32,
+  quarts: 32,
+  gal: 128,
+  gallon: 128,
+  cup: 8,
+  cups: 8,
+};
+
+const SIZE_RE = new RegExp(
+  String.raw`(\d+(?:\.\d+)?)\s*-?\s*(fl\.?\s*oz|ounces?|oz|ml|liters?|litres?|l|quarts?|qt|gallons?|gal|cups?)\b`,
+  "i"
+);
+
+// "2-Pack", "Set of 16", "4 Pack", "Pack of 3".
+const PACK_RES = [
+  /\bset\s+of\s+(\d{1,3})\b/i,
+  /\bpack\s+of\s+(\d{1,3})\b/i,
+  /\b(\d{1,3})\s*-?\s*(?:pack|pk|count|ct|pcs|pieces)\b/i,
+];
+
+/** Total fluid ounces a listing represents, or null when the title doesn't say. */
+export function parseVolumeOz(title) {
+  if (!title) return null;
+  const m = SIZE_RE.exec(String(title));
+  if (!m) return null;
+  const value = parseFloat(m[1]);
+  if (!Number.isFinite(value) || value <= 0) return null;
+
+  let unit = m[2].toLowerCase().replace(/\./g, "").replace(/\s+/g, " ").trim();
+  if (unit.startsWith("fl")) unit = "fl oz";
+  const factor = VOLUME_TO_OZ[unit];
+  if (!factor) return null;
+
+  const oz = value * factor;
+  // A single vessel over five gallons is a parse artefact, not a tumbler.
+  if (oz <= 0 || oz > 640) return null;
+  return oz * (parsePackCount(String(title)) || 1);
+}
+
+/** Units in the pack, or null when the title doesn't say (treated as 1). */
+export function parsePackCount(title) {
+  if (!title) return null;
+  for (const re of PACK_RES) {
+    const m = re.exec(String(title));
+    if (m) {
+      const n = parseInt(m[1], 10);
+      if (Number.isFinite(n) && n > 0 && n <= 500) return n;
+    }
+  }
+  return null;
+}
+
+/** Price per fluid ounce, or null when either half is unknown. */
+export function pricePerOz(product) {
+  if (!product) return null;
+  const price = parsePrice(product.price_text);
+  if (price == null || price <= 0) return null;
+  const oz = parseVolumeOz(product.title);
+  if (oz == null) return null;
+  return price / oz;
 }

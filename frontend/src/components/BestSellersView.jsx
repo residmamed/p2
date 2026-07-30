@@ -438,6 +438,13 @@ export default function BestSellersView() {
   // Sticky across searches: a buyer who works with the metrics open should not
   // have to re-open them on every query.
   const [showMetrics, setShowMetrics] = useStoredState("p2_show_metrics", false);
+  // The keyword that produced the grid on screen, pinned at submit time.
+  // Deliberately NOT the live input value: "Find more from <store>" counts the
+  // rows it already has off the current results but sent whatever was in the
+  // box, so typing a new keyword without submitting made the backend skip the
+  // top N of the *new* query and append the remainder into an unrelated grid.
+  // Clearing the box also made the whole row vanish while results were still up.
+  const [activeQuery, setActiveQuery] = useState("");
 
   // Manufacturer search state
   const [mfrLoading, setMfrLoading] = useState(false);
@@ -502,7 +509,7 @@ export default function BestSellersView() {
   // Shared product-search runner for both the text and photo entry points.
   // `mode` is "text" or "lens"; a lens search reports back exact/similar via
   // data.lensMode so the UI can explain what Google Lens found.
-  async function runProductSearch(searchFn, mode = "text") {
+  async function runProductSearch(searchFn, mode = "text", activeQueryLabel = "") {
     const controller = newAbort();
     setSearchMode(mode);
     setLoading(true);
@@ -522,16 +529,27 @@ export default function BestSellersView() {
     let found = null;
     try {
       const data = await searchFn(controller.signal);
+      // A superseded run must not write over the run that replaced it. Every
+      // late write is gated on this controller still being the current one —
+      // including the `finally` below, because `return` inside catch does NOT
+      // skip it. Without the guard, run #1's rejection cleared run #2's
+      // loading flag and the page showed "No results found" for the remaining
+      // ~30s of a search that was still in flight. Reachable in normal use:
+      // the Cmd-K palette and the saved-search chips both start a search
+      // without going through the `disabled={loading}` submit button.
+      if (abortRef.current !== controller) return;
       setProducts(data.results);
       setWarnings(data.warnings || []);
       if (mode === "lens") setLensMode(data.lensMode || "similar");
+      setActiveQuery(activeQueryLabel);
       found = data.results;
     } catch (err) {
-      if (isAbortError(err)) return;
+      if (isAbortError(err) || abortRef.current !== controller) return;
       setError(err.message || "Something went wrong");
       setProducts([]);
+      setActiveQuery("");
     } finally {
-      setLoading(false);
+      if (abortRef.current === controller) setLoading(false);
     }
 
     // Start looking for suppliers now — both passes, fast and deep — silently,
@@ -555,7 +573,7 @@ export default function BestSellersView() {
     const q = query.trim();
     setImagePreview(null); // a text search supersedes any photo reference
     pushRecent(q, sites);
-    runProductSearch((signal) => searchBestSellers(q, { sites, signal }));
+    runProductSearch((signal) => searchBestSellers(q, { sites, signal }), "text", q);
   }
 
   // Saved-search chips and the command palette re-run searches through here.
@@ -571,7 +589,7 @@ export default function BestSellersView() {
       return;
     }
     pushRecent(q, nextSites);
-    runProductSearch((signal) => searchBestSellers(q, { sites: nextSites, signal }));
+    runProductSearch((signal) => searchBestSellers(q, { sites: nextSites, signal }), "text", q);
   }
   const runNamedSearchRef = useRef(runNamedSearch);
   runNamedSearchRef.current = runNamedSearch;
@@ -603,7 +621,8 @@ export default function BestSellersView() {
     setImagePreview(URL.createObjectURL(croppedFile));
     runProductSearch(
       (signal) => searchBestSellersByImage(croppedFile, { sites, signal }),
-      "lens"
+      "lens",
+      "" // a photo search has no keyword, so "Find more" stays withheld
     );
   }
 
@@ -840,12 +859,12 @@ export default function BestSellersView() {
     // Lens matching an image, and the stores were never queried by term. Paging
     // them would mean inventing a query the user never typed, so the row is
     // withheld rather than offering buttons that can only fail.
-    if (searchMode !== "text" || !query.trim()) return [];
+    if (searchMode !== "text" || !activeQuery) return [];
     const counts = new Map();
     for (const p of products) counts.set(p.site, (counts.get(p.site) || 0) + 1);
     // Ordered by the store picker, so the buttons don't reshuffle between runs.
     return sites.filter((s) => counts.has(s)).map((s) => ({ site: s, count: counts.get(s) }));
-  }, [products, sites, searchMode, query]);
+  }, [products, sites, searchMode, activeQuery]);
 
   async function handleFindMore(site) {
     const have = storeCounts.find((s) => s.site === site)?.count ?? 0;
@@ -854,7 +873,7 @@ export default function BestSellersView() {
       // Deliberately its own AbortController, not newAbort(): these run one
       // store at a time and must not cancel a supplier search — or each other —
       // the way starting a new product search does.
-      const data = await findMoreFromStore(query.trim(), site, have);
+      const data = await findMoreFromStore(activeQuery, site, have);
       const fresh = data.results || [];
       if (fresh.length) {
         // Appended, not merged: the grid is grouped by store and the backend

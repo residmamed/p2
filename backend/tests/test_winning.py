@@ -178,3 +178,46 @@ def test_momentum_component_is_bounded_and_neutral_when_still():
     assert still.momentum_component == 0.5
     for p in products:
         assert 0.0 <= p.momentum_component <= 1.0
+
+
+def test_missing_review_count_does_not_promote_a_row():
+    """A chart row Amazon didn't annotate must not climb the page for it.
+
+    `ratings_total or 0` placed "not published" at the bottom of the review-mass
+    scale, which the day-one inference reads as the strongest possible evidence
+    of a riser. Measured against the real Kitchen fixture, blanking one row's
+    count moved it from position #21 to #9.
+    """
+    charts = winning._load_fixture()
+    assert charts["bestsellers"], "fixture must be present for this test"
+
+    baseline = winning.build(charts, category="kitchen")
+    target = baseline[20].asin  # the row the audit measured
+    baseline_pos = [p.asin for p in baseline].index(target)
+
+    blanked = {
+        "bestsellers": [
+            {**r, "ratings_total": None} if r.get("asin") == target else r
+            for r in charts["bestsellers"]
+        ],
+        "new_releases": charts.get("new_releases", []),
+    }
+    after = winning.build(blanked, category="kitchen")
+    after_pos = [p.asin for p in after].index(target)
+
+    # Losing evidence must never improve a row's position.
+    assert after_pos >= baseline_pos
+    moved = next(p for p in after if p.asin == target)
+    assert moved.momentum_basis == "none"
+    assert moved.breakout is None
+
+
+def test_unscoreable_momentum_sits_at_the_neutral_midpoint():
+    charts = {
+        "bestsellers": [chart_row("A", 1, None), chart_row("B", 2, None)],
+        "new_releases": [],
+    }
+    for p in winning.build(charts, category="kitchen"):
+        assert p.momentum_basis == "none"
+        assert p.momentum_component == 0.5
+        assert p.breakout is None

@@ -213,7 +213,15 @@ def build(
     history = history or {}
     n = len(bestsellers)
 
-    review_pct = _percentile_map([float(r.get("ratings_total") or 0) for r in bestsellers])
+    # Only listings that actually published a count take part in the percentile
+    # map. Folding a missing field in as 0 would place it at the bottom of the
+    # review-mass scale, which the inference below reads as the *strongest*
+    # possible breakout evidence — so a chart row Amazon simply didn't annotate
+    # would outrank genuine risers. Measured on the Kitchen fixture: blanking
+    # one row's count moved it from position #21 to #9.
+    review_pct = _percentile_map(
+        [float(r["ratings_total"]) for r in bestsellers if r.get("ratings_total") is not None]
+    )
     ratings = [float(r["rating"]) for r in bestsellers if r.get("rating") is not None]
     best_rating = max(ratings) if ratings else 5.0
     worst_rating = min(ratings) if ratings else 0.0
@@ -229,8 +237,12 @@ def build(
         quality = ((rating - worst_rating) / rating_span) if rating is not None else 0.0
 
         # Single-scan inference: standing, minus the review mass propping it up.
-        depth = review_pct.get(float(row.get("ratings_total") or 0), 0.5)
-        breakout = max(0.0, min(1.0, (demand - depth + 1.0) / 2.0))
+        # Absent without a review count — the inference is *about* review mass,
+        # so with none there is nothing to infer from and the row says "none"
+        # rather than guessing.
+        raw_reviews = row.get("ratings_total")
+        depth = review_pct.get(float(raw_reviews)) if raw_reviews is not None else None
+        breakout = None if depth is None else max(0.0, min(1.0, (demand - depth + 1.0) / 2.0))
 
         # Observed history wins whenever it exists.
         points = [h["rank"] for h in history.get(row["asin"], [])]
@@ -251,9 +263,16 @@ def build(
             # Bounded to [-100, +100] by construction, so this maps cleanly onto
             # 0-1 with "didn't move" landing at 0.5 rather than at an end.
             momentum_component = max(0.0, min(1.0, (momentum_pct + 100) / 200))
-        else:
+        elif breakout is not None:
             basis = "rank_vs_depth"
             momentum_component = breakout
+        else:
+            # No history and no review count: nothing to say about movement.
+            # Scored at the neutral midpoint so the row is neither rewarded nor
+            # punished for a field the chart didn't publish, and labelled
+            # "none" so the UI draws no momentum at all.
+            basis = "none"
+            momentum_component = 0.5
 
         score = round(
             100 * (W_MOMENTUM * momentum_component + W_DEMAND * demand + W_QUALITY * quality),
@@ -279,7 +298,7 @@ def build(
                 momentum_basis=basis,
                 momentum_pct=momentum_pct,
                 momentum_positions=momentum_positions,
-                breakout=round(breakout, 3),
+                breakout=round(breakout, 3) if breakout is not None else None,
                 rank_history=points,
                 snapshots=len(points),
                 demand_component=round(demand, 3),

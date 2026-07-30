@@ -3,6 +3,8 @@ import {
   marketSnapshot,
   opportunityScores,
   parsePrice,
+  parseVolumeOz,
+  pricePerOz,
   ratingConfidenceScore,
 } from "./productMetrics";
 
@@ -183,5 +185,75 @@ describe("marketSnapshot", () => {
     ]);
     expect(s.siteMix[0]).toMatchObject({ site: "amazon", count: 2 });
     expect(s.siteMix.reduce((n, m) => n + m.count, 0)).toBe(3);
+  });
+});
+
+describe("parseVolumeOz / pricePerOz", () => {
+  it("reads a plain ounce size out of a title", () => {
+    expect(parseVolumeOz("Owala FreeSip Water Bottle 24 oz Very Dark")).toBe(24);
+    expect(parseVolumeOz("STANLEY Quencher H2.0 Tumbler 30 oz")).toBe(30);
+  });
+
+  it("handles the 'fl oz' spelling", () => {
+    expect(parseVolumeOz("Hydro Flask 32 fl oz Wide Mouth")).toBe(32);
+  });
+
+  it("converts metric to fluid ounces", () => {
+    expect(parseVolumeOz("Coffee Carafe 1.5 Liter Thermal")).toBeCloseTo(50.721, 2);
+    expect(parseVolumeOz("Travel Mug 500ml")).toBeCloseTo(16.907, 2);
+  });
+
+  it("multiplies by the pack count, so a 4-pack is not priced as one item", () => {
+    expect(parseVolumeOz("Ribbed Glass Tumbler 4Pcs - 20oz Leak Proof")).toBe(80);
+    expect(parseVolumeOz("Set of 16 Drinking Glasses 12 oz")).toBe(192);
+    expect(parseVolumeOz("Mason Jars 2-Pack 16 oz")).toBe(32);
+  });
+
+  it("returns null rather than guessing when the title states no size", () => {
+    expect(parseVolumeOz("Alpha Grillers Instant Read Meat Thermometer")).toBeNull();
+    expect(parseVolumeOz("")).toBeNull();
+    expect(parseVolumeOz(null)).toBeNull();
+  });
+
+  it("rejects an implausible single-vessel volume as a parse artefact", () => {
+    // "2024" is a year, not a 2,024-ounce tumbler.
+    expect(parseVolumeOz("Tumbler 2024 oz Limited Edition")).toBeNull();
+  });
+
+  it("does not treat weight as volume", () => {
+    // Grams and pounds are mass; pooling them with fluid ounces would compare
+    // an ounce of coffee to an ounce of water.
+    expect(parseVolumeOz("Coffee Beans 340 g Medium Roast")).toBeNull();
+    expect(parseVolumeOz("Protein Powder 2 lb Vanilla")).toBeNull();
+  });
+
+  it("prices per ounce only when both halves are known", () => {
+    expect(pricePerOz({ title: "Tumbler 20 oz", price_text: "$10.00" })).toBeCloseTo(0.5, 5);
+    expect(pricePerOz({ title: "Tumbler", price_text: "$10.00" })).toBeNull();
+    expect(pricePerOz({ title: "Tumbler 20 oz", price_text: null })).toBeNull();
+  });
+
+  it("makes a bigger bottle the better value at the same sticker price", () => {
+    const big = pricePerOz({ title: "Bottle 40 oz", price_text: "$20.00" });
+    const small = pricePerOz({ title: "Bottle 20 oz", price_text: "$20.00" });
+    expect(big).toBeLessThan(small);
+  });
+});
+
+describe("marketSnapshot per-oz", () => {
+  it("reports the median unit price and how many listings it is based on", () => {
+    const s = marketSnapshot([
+      { title: "Bottle 20 oz", price_text: "$10.00" }, // 0.50
+      { title: "Bottle 40 oz", price_text: "$20.00" }, // 0.50
+      { title: "Thermometer", price_text: "$15.00" }, // no size
+    ]);
+    expect(s.perOzCount).toBe(2);
+    expect(s.medianPerOz).toBeCloseTo(0.5, 5);
+  });
+
+  it("leaves the unit price absent when no listing states a size", () => {
+    const s = marketSnapshot([{ title: "Thermometer", price_text: "$15.00" }]);
+    expect(s.perOzCount).toBe(0);
+    expect(s.medianPerOz).toBeNull();
   });
 });
