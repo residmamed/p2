@@ -1,0 +1,26 @@
+# Secrets never enter the image. They are supplied at runtime with
+# `fly secrets set`, which keeps them out of the layer history — anyone who can
+# pull the image can read any file baked into it, including a deleted one.
+.env
+.env.*
+# .env.example is NOT re-admitted. In most repos it is a harmless template; in
+# this one it holds live values (the Apify token, the Oxylabs username and
+# password), so shipping it would publish exactly what the line above excludes.
+
+# 1.4 GB of macOS-built wheels with absolute paths baked in. Copying it in would
+# both bloat the image and shadow the Linux packages installed by the Dockerfile.
+.venv/
+
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Regenerable: the Lens result cache and scratch scrape output.
+.cache/
+extracted_products.json
+new_batch.json
+one.json
+
+spikes/
+tests/
+.DS_Store

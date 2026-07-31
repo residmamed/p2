@@ -1,0 +1,32 @@
+# Netlify config for the p2 frontend.
+#
+# The app is served from the root of its own subdomain, p2.paraphoria.com, so
+# the Fluid site at paraphoria.com is never touched and cannot be regressed by
+# a p2 deploy.
+#
+# Netlify serves the built page only. The API is NOT proxied through here: a
+# one-site product search measures ~19s and the sourcing pipelines run much
+# longer, which is the wrong side of a CDN's proxy timeout. The frontend calls
+# api.paraphoria.com directly instead — see src/api.js.
+
+[build]
+  # `publish` resolves relative to `base`, so this is frontend/dist.
+  base    = "frontend"
+  command = "npm run build"
+  publish = "dist"
+
+[build.environment]
+  # Served from the root of its own subdomain, so no path prefix. (Set this to
+  # "/p/2/" instead if the app is ever moved under paraphoria.com/p/2 — the
+  # build honours it and emits into a matching directory.)
+  VITE_BASE_PATH = "/"
+  VITE_API_BASE  = "https://api.paraphoria.com"
+  NODE_VERSION   = "22"
+
+# Client-side routes fall back to the app's entry point. Real files (the HTML,
+# the hashed assets) are found on disk first, so this only catches paths the
+# app itself handles.
+[[redirects]]
+  from   = "/*"
+  to     = "/index.html"
+  status = 200

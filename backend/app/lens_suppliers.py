@@ -50,7 +50,7 @@ from urllib.parse import urlparse, urlunparse
 
 import httpx
 
-from . import lens_cache, serp_lens, supplier_contacts
+from . import credentials, lens_cache, serp_lens, supplier_contacts
 from .config import settings
 from .models import (
     FindSuppliersResponse,
