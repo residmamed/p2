@@ -34,8 +34,14 @@ primary_region = "fra"   # close to the user; change to your nearest region
     type = "requests"
     # Searches are I/O-bound (waiting on Zyte, SerpApi, Anthropic) rather than
     # CPU-bound, so one machine can hold many in flight at once.
-    soft_limit = 20
-    hard_limit = 40
+    #
+    # Raised from 20/40. The supplier prefetch keeps 6 requests in flight per
+    # browser tab and each runs for 10-20s, so a handful of simultaneous viewers
+    # reaches the old hard limit — past which Fly refuses the connection outright.
+    # A refused connection carries no CORS headers, so the browser reports it as
+    # a CORS failure and the real cause is invisible.
+    soft_limit = 50
+    hard_limit = 250
 
 [[http_service.checks]]
   # /api/health is exempt from the password gate precisely so this works —

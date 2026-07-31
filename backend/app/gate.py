@@ -12,6 +12,14 @@ running locally is byte-for-byte the behaviour it has always had:
   APP_PASSWORD      a shared password. Unset => no gate at all (local dev).
   RATE_LIMIT_PER_HOUR   per-IP ceiling on the endpoints that cost money.
 
+**Size RATE_LIMIT_PER_HOUR against requests, not against clicks.** This app fans
+out: "find suppliers" issues one POST /api/find-suppliers *per product*, and a
+search returns 26-43 of them. One click is therefore ~40 requests, and a ceiling
+chosen as though a request were a user action locks the app out mid-search — as
+60/hour did on the live deployment, where a single search exhausted the budget
+and the browser reported the resulting failures as CORS errors rather than as
+the rate limiting they actually were.
+
 The password is deliberately *not* a user system. There are no accounts, no
 per-user quotas and no billing here — this is the "people I gave the password
 to" tier, and it should not be mistaken for the multi-tenant one. What it buys
@@ -199,7 +207,10 @@ async def middleware(request: Request, call_next):
                 "API budget this app runs on. Try again later."
             )
         )
-        return JSONResponse({"detail": detail}, status_code=429)
+        # Retry-After lets a client back off intelligently instead of hammering
+        # a limit it has already hit — which is what produced 40+ failed
+        # requests in a row the first time this fired.
+        return JSONResponse({"detail": detail}, status_code=429, headers={"Retry-After": "60"})
 
     return await call_next(request)
 
