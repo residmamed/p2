@@ -35,6 +35,63 @@ class Settings(BaseSettings):
     # /thumbnail, and says so per row rather than returning an empty grid.
     oxylabs_username: str = ""
     oxylabs_password: str = ""
+    # Supplier search calls SerpApi and nothing else. Google Lens finds the
+    # listing and the row is built from what SerpApi itself returned — the
+    # product page is never opened, so no supplier name, no MOQ and NO PRICE.
+    #
+    # The price is worth spelling out because it is tempting to assume Lens
+    # carries one. It does, for retail: measured on a live visual_matches call,
+    # 10 of 60 matches had a `price` field and all 10 were Amazon or Walmart.
+    # All three Alibaba matches had `price: null`. Lens does not read prices off
+    # Chinese marketplace pages, so on exactly the sources this feature is for,
+    # there is nothing to carry.
+    #
+    # Every such row is flagged `enriched: false` with the reason, and the
+    # contact lookup is skipped whatever the caller asks for. Unset to restore
+    # the Oxylabs enrichment step. See app/lens_suppliers.py `_enrich`.
+    supplier_search_serpapi_only: bool = False
+
+    # Which vendor opens the matched product page to read supplier, price, MOQ
+    # and rating off it. "oxylabs" is a REST fetch of the raw HTML; "browserbase"
+    # renders the page in a cloud browser; "none" is equivalent to
+    # supplier_search_serpapi_only and leaves every row on its Lens data.
+    #
+    # Browserbase is the slower and more expensive of the two — measured on live
+    # pages, 9.7-23.3s each against Oxylabs' sub-second fetch — and it is chosen
+    # for what it can reach, not for speed. It runs a real browser, so it sees
+    # the page state that carries Alibaba's `averageStar`, and it survives pages
+    # that refuse a plain fetch. The latency is answered by running many at once
+    # rather than by making any one of them quick.
+    supplier_enrichment_backend: str = "browserbase"
+
+    # How many product pages are opened at once when the backend is Browserbase.
+    # This is the plan's concurrent-browser cap and it is hard: over it, the
+    # session create FAILS rather than queueing. 3 on Free, 25 on Developer.
+    # One session per page (see browserbase_client.fetch_pages), so this is
+    # literally the number of browsers running.
+    browserbase_page_concurrency: int = 25
+
+    # How many of a search's marketplace hits get their page opened at all.
+    # Lens routinely returns 40+ and nobody scrolls that far, so the cap spends
+    # the budget on the best-matched ones. Sized to the browser concurrency
+    # above, so one search is one full wave rather than a wave and a stub.
+    supplier_enrich_max_pages: int = 25
+
+    # How long a product page's PARSED fields are reused before it is opened
+    # again. See app/page_cache.py for why this exists and why it is hours
+    # rather than lens_cache's days. 0 disables it — the right value if quotes
+    # are being acted on rather than shown.
+    supplier_page_cache_ttl_minutes: int = 360
+    supplier_page_cache_dir: str = ".cache/pages"
+
+    # How many SerpApi calls may be in flight at once, process-wide, and how
+    # many times a 429 is retried. The UI starts a supplier lookup per product
+    # as soon as a grid lands and each makes two Lens calls, so an unthrottled
+    # 46-product search fires ~92 simultaneous requests and SerpApi 429s most of
+    # them. Measured: the same key answers a single isolated call with HTTP 200
+    # on a full quota, so this is a concurrency limit and not a search limit.
+    serpapi_concurrency: int = 5
+    serpapi_max_retries: int = 3
     # JavaScript rendering roughly triples the per-page cost and latency. The
     # fields this app reads (the embedded supplier record, og: tags, JSON-LD)
     # are all server-rendered, so it is off by default — flip it if a target

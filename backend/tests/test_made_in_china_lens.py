@@ -18,6 +18,7 @@ from pathlib import Path
 
 import pytest
 
+from app import lens_suppliers
 from app.lens_suppliers import (
     MARKETPLACE_BY_SOURCE_LABEL,
     MAX_ENRICH,
@@ -171,17 +172,17 @@ def test_a_high_volume_site_cannot_take_the_whole_budget():
     """
     picked = _enrich_targets(_alibaba(55) + _mic(3))
     sites = [c.marketplace for c in picked]
-    assert len(picked) == MAX_ENRICH
+    assert len(picked) == lens_suppliers.MAX_ENRICH
     assert sites.count("made_in_china") == 3
-    assert sites.count("alibaba") == MAX_ENRICH - 3
+    assert sites.count("alibaba") == lens_suppliers.MAX_ENRICH - 3
 
 
 def test_the_budget_is_not_split_evenly_when_one_site_is_short():
     """A site with fewer hits than its share does not hold slots it cannot use —
     the remainder goes back to whoever has listings left."""
     picked = _enrich_targets(_alibaba(20) + _mic(1))
-    assert len(picked) == MAX_ENRICH
-    assert [c.marketplace for c in picked].count("alibaba") == MAX_ENRICH - 1
+    assert len(picked) == lens_suppliers.MAX_ENRICH
+    assert [c.marketplace for c in picked].count("alibaba") == lens_suppliers.MAX_ENRICH - 1
 
 
 def test_the_best_matching_row_of_each_site_is_taken_first():

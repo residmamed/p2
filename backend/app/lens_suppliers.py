@@ -9,6 +9,17 @@ never touches the sites' search at all:
     STEP 2  Oxylabs Web Scraper   each Alibaba/1688/Made-in-China URL ->
                                   supplier, price, MOQ
 
+**Step 2 is off by default** — SUPPLIER_SEARCH_SERPAPI_ONLY, so that a supplier
+search calls SerpApi and no other vendor. The rows still come back, every one of
+them, built from what SerpApi itself returned and flagged `enriched: false`. What
+they lose is everything only the product page carries: the factory's name, the
+MOQ, and the price. Measured over four live generic-product searches on
+2026-07-30 — 0, 7, 15 and 12 marketplace rows, and across all 34: **zero
+supplier names, zero MOQs, one price**. Lens does have a price field, but only
+for retail — on a live visual_matches call 10 of 60 matches carried one and all
+10 were Amazon or Walmart, while every Alibaba match had `price: null`.
+Unset the flag to restore step 2.
+
 Both are plain REST. Step 1 is one round trip that answers in ~1-2s; step 2 is
 N independent fetches fired concurrently. The target is the whole thing under
 5 seconds, which is only achievable because nothing here renders a page or waits
@@ -50,7 +61,14 @@ from urllib.parse import urlparse, urlunparse
 
 import httpx
 
-from . import lens_cache, serp_lens, supplier_contacts
+from . import (
+    browserbase_client,
+    credentials,
+    lens_cache,
+    page_cache,
+    serp_lens,
+    supplier_contacts,
+)
 from .config import settings
 from .models import (
     FindSuppliersResponse,
@@ -98,7 +116,10 @@ UPLOAD_TIMEOUT = 8.0
 # Firing every marketplace hit at Oxylabs would spend the latency budget on rows
 # nobody scrolls to, and Lens routinely returns 40+. Ordered by Lens match
 # position, so the cap takes the best ones.
-MAX_ENRICH = 10
+# Configurable because the two enrichment backends have very different budgets:
+# an Oxylabs fetch is sub-second, so ten is generous, while a Browserbase page is
+# ~10-20s and the answer to that is width, not patience.
+MAX_ENRICH = settings.supplier_enrich_max_pages
 ENRICH_CONCURRENCY = 6
 
 # Enrichment targets. Taobao listings are still returned — Lens finds them and
@@ -135,6 +156,52 @@ MARKETPLACES = ("alibaba", "1688", "taobao", "made_in_china")
 # the separator, which is the whole reason this tests for `/product/` and
 # `/product_` rather than for the substring "product".
 MIC_PRODUCT_PATH = ("/product/", "/product_")
+
+# Alibaba directory paths. Its Lens results were assumed to be listings or
+# nothing — measured 2026-07-30, that is false: a live search returned
+# `alibaba.com/countrysearch/CN/cooking-utensils-and-gadgets.html`, whose page
+# parses into a real supplier name, a "50 sets" MOQ and a price of **$1,000,000**.
+# A category page yields a confident-looking row that is wrong in every field
+# that matters, which is exactly what MIC_PRODUCT_PATH already exists to stop.
+#
+# A deny-list rather than an allow-list of `/product-detail/`, deliberately.
+# These are the shapes measured to be wrong; an allow-list would also reject any
+# listing URL shape not seen yet, and dropping a real supplier to keep a
+# directory out is the worse of the two errors.
+ALIBABA_NON_PRODUCT_PATH = (
+    "/countrysearch/",
+    "/showroom/",
+    "/trade/search",
+    "/catalog/",
+    "/products-search/",
+    # Alibaba's keyword-category pages, e.g.
+    # `french.alibaba.com/g/silicone-kitchenaid-utensils.html`. Found the same
+    # way as /countrysearch/: it was the last page still opening a browser on a
+    # warm run, because a category page never parses and so never caches.
+    "/g/",
+    # Brand landing pages, e.g. `alibaba.com/premium/nuna.html`. Alibaba serves
+    # a login wall on these, Google indexed the wall, and SerpApi returned the
+    # hit with the title "Sign In - Alibaba.com" — which is what the user then
+    # read in the listing column, twice, on a product with no real matches.
+    "/premium/",
+)
+
+# Lens titles that describe the page we were bounced to rather than a product.
+# The path deny-list above cannot catch these on its own: a login wall can be
+# served from any URL, and the title is the only thing that gives it away when
+# the URL looks ordinary. Matched on the whole title, lowercased — a real
+# listing named "Sign In Sheet Printing" contains these words but is not equal
+# to any of them.
+NON_LISTING_TITLES = {
+    "sign in - alibaba.com",
+    "sign in",
+    "log in",
+    "login",
+    "please verify",
+    "security check",
+    "404 not found",
+    "page not found",
+}
 
 MAX_PARTIAL_MATCHES = 25
 MAX_IMAGE_BYTES = 8 * 1024 * 1024
@@ -261,17 +328,36 @@ def _is_redirect(url: str) -> bool:
 def _is_product_page(candidate: LensCandidate) -> bool:
     """Does this marketplace hit point at a listing, or at a directory page?
 
-    Only asked of Made-in-China, whose Lens results mix the two. Every other
-    site here returns product URLs or nothing, and inventing a shape test for
-    them would reject listings on a guess. See MIC_PRODUCT_PATH.
+    Asked of Made-in-China, whose Lens results openly mix the two, and of
+    Alibaba, which was believed not to until a live search returned a
+    `/countrysearch/` page that enriched into a supplier row priced at a million
+    dollars. See MIC_PRODUCT_PATH and ALIBABA_NON_PRODUCT_PATH.
+
+    The two sites are tested in opposite directions on purpose: Made-in-China
+    has to look like a listing to pass, because its directory pages are common
+    and its listing shapes are known; Alibaba only has to not look like a
+    directory, because its listing shapes are not all known and rejecting a real
+    factory is worse than admitting a rare category page.
     """
-    if candidate.marketplace != "made_in_china":
-        return True
     try:
         path = urlparse(candidate.product_url).path.lower()
     except ValueError:
         return False
-    return any(marker in path for marker in MIC_PRODUCT_PATH)
+    if candidate.marketplace == "made_in_china":
+        return any(marker in path for marker in MIC_PRODUCT_PATH)
+    if candidate.marketplace == "alibaba":
+        return not any(marker in path for marker in ALIBABA_NON_PRODUCT_PATH)
+    return True
+
+
+def _is_listing_title(title: Optional[str]) -> bool:
+    """False when Lens's own title names a login wall or an error page.
+
+    Checked before anything is fetched: a candidate whose title is already
+    "Sign In - Alibaba.com" cannot become a supplier row no matter what the
+    page turns out to contain, and enriching it spends a browser to confirm it.
+    """
+    return (title or "").strip().lower() not in NON_LISTING_TITLES
 
 
 def _marketplace_from_source(source_name: Optional[str]) -> Optional[str]:
@@ -356,22 +442,62 @@ def _candidate_from(match: dict, match_confidence: str, order: int) -> Optional[
     )
 
 
+# Process-wide throttle on SerpApi, and the retry that goes with it.
+#
+# There was neither, and the pipeline fans out hard: the UI starts a supplier
+# lookup for every product the moment a grid lands, each lookup makes two Lens
+# calls, so a 46-product search fired ~92 SerpApi requests simultaneously.
+# SerpApi answered a lot of them with 429, `_lens_call` turned each 429 into an
+# empty result, and the endpoint reported "Google Lens matched this image to
+# nothing on the web" — a rate-limited product was indistinguishable from a
+# product with genuinely no matches, on a grid where some of each were present.
+#
+# Verified 2026-07-30: the same key that 429s under that fan-out answers a single
+# isolated call with HTTP 200 and a full quota. The limit is concurrency, not
+# searches.
+_serpapi_limit: asyncio.Semaphore | None = None
+
+
+def _serpapi_limiter() -> asyncio.Semaphore:
+    global _serpapi_limit
+    if _serpapi_limit is None:
+        _serpapi_limit = asyncio.Semaphore(settings.serpapi_concurrency)
+    return _serpapi_limit
+
+
 async def _lens_call(
     client: httpx.AsyncClient, image_url: str, search_type: str
 ) -> tuple[list[LensCandidate], list[str]]:
-    try:
-        response = await client.get(
-            serp_lens.SERPAPI_URL,
-            params={
-                "engine": "google_lens",
-                "type": search_type,
-                "url": image_url,
-                "api_key": credentials.SERPAPI.next(),
-            },
-        )
-    except httpx.HTTPError as e:
-        return [], [f"Lens {search_type} request failed ({type(e).__name__})."]
+    response = None
+    async with _serpapi_limiter():
+        for attempt in range(settings.serpapi_max_retries + 1):
+            try:
+                response = await client.get(
+                    serp_lens.SERPAPI_URL,
+                    params={
+                        "engine": "google_lens",
+                        "type": search_type,
+                        "url": image_url,
+                        "api_key": credentials.SERPAPI.next(),
+                    },
+                )
+            except httpx.HTTPError as e:
+                return [], [f"Lens {search_type} request failed ({type(e).__name__})."]
+            # 429 is "slow down", not "no results". Retried inside the semaphore
+            # so a backing-off caller keeps its slot instead of handing it to
+            # another request that will be told the same thing.
+            if response.status_code != 429 or attempt == settings.serpapi_max_retries:
+                break
+            await asyncio.sleep(2 ** attempt)
 
+    if response.status_code == 429:
+        # Said explicitly. Collapsing this into the generic empty-result path is
+        # what made a throttled search look like a product with no suppliers.
+        return [], [
+            f"Lens {search_type} was rate-limited by SerpApi (HTTP 429) after "
+            f"{settings.serpapi_max_retries} retries — this is a throttle, not a "
+            f"finding. Results for this product are incomplete."
+        ]
     if response.status_code != 200:
         return [], [f"Lens {search_type} returned HTTP {response.status_code}."]
     try:
@@ -508,6 +634,10 @@ def _merged(candidate: LensCandidate, parsed: ParsedProduct) -> SupplierMatch:
         image_url=parsed.image_url or candidate.image_url,
         source=candidate.marketplace or "",
         match_confidence=candidate.match_confidence,
+        # Alibaba-only in practice — Made-in-China publishes no rating — so most
+        # rows carry None here and the UI shows "N/A" rather than a zero.
+        rating=parsed.rating,
+        review_count=parsed.review_count,
         enriched=True,
     )
 
@@ -562,22 +692,84 @@ async def _enrich(
     if not candidates:
         return [], [], []
 
-    oxylabs = oxylabs or OxylabsClient()
-    if not oxylabs.is_configured():
-        reason = "Oxylabs not configured (OXYLABS_USERNAME / OXYLABS_PASSWORD unset)."
+    # SerpApi-only mode: the enrichment step is skipped even where Oxylabs is
+    # configured and working, so SerpApi is the only vendor this endpoint calls.
+    #
+    # The rows still come back — every candidate, on its Lens data — which is the
+    # same shape the unconfigured branch below produces, and for the same reason:
+    # a listing with a thin record is still a lead. What is gone is everything
+    # only the product page carries. Concretely, each row loses:
+    #
+    #     supplier / factory name      the answer a supplier search is for
+    #     MOQ                          never present in Lens data
+    #     price                        also absent, despite Lens having a price
+    #                                  field: measured on a live call, 10 of 60
+    #                                  matches carried one and all 10 were
+    #                                  retail (Amazon, Walmart). Every Alibaba
+    #                                  match had price: null. What is left on a
+    #                                  marketplace row is a title, a thumbnail
+    #                                  and a link.
+    #
+    # Every row is flagged `enriched: false` with the reason, so nothing here
+    # presents a Lens title as a verified supplier record.
+    if settings.supplier_search_serpapi_only:
+        reason = "SerpApi-only mode: supplier pages are not opened."
+        return (
+            [_from_lens_only(c, reason) for c in candidates],
+            [
+                f"{len(candidates)} marketplace listing(s) were not enriched. "
+                "Supplier search is set to SerpApi only, so titles, prices and "
+                "thumbnails are SerpApi's own and no MOQ or supplier name is "
+                "available. Unset SUPPLIER_SEARCH_SERPAPI_ONLY to restore them."
+            ],
+            [],
+        )
+
+    use_browser = settings.supplier_enrichment_backend == "browserbase"
+
+    # Whichever backend is chosen, being unconfigured is a degradation and never
+    # an error: the rows come back on their Lens data saying why.
+    if use_browser and not browserbase_client.is_configured():
+        reason = "Browserbase not configured (BROWSERBASE_API_KEY / BROWSERBASE_PROJECT_ID unset)."
+    elif not use_browser:
+        oxylabs = oxylabs or OxylabsClient()
+        reason = (
+            None
+            if oxylabs.is_configured()
+            else "Oxylabs not configured (OXYLABS_USERNAME / OXYLABS_PASSWORD unset)."
+        )
+    else:
+        reason = None
+    if reason:
         return (
             [_from_lens_only(c, reason) for c in candidates],
             [
                 f"{len(candidates)} marketplace listing(s) were not enriched: {reason} "
-                "Titles, prices and thumbnails are SerpApi's own; no MOQ or supplier "
-                "name is available without it."
+                "Titles, prices and thumbnails are SerpApi's own; no MOQ, supplier "
+                "name or rating is available without it."
             ],
             [],
         )
 
     targets = _enrich_targets(candidates)
     target_urls = [c.product_url for c in targets]
-    outcomes = await scrape_many(target_urls, oxylabs, concurrency=ENRICH_CONCURRENCY)
+    # Pages read recently enough are reused rather than reopened. On the second
+    # run of the same search this empties `target_urls` entirely and no browser
+    # starts at all, which is the difference between a 20-second demo and an
+    # instant one.
+    cached = {u: p for u in target_urls if (p := page_cache.get(u)) is not None}
+    target_urls = [u for u in target_urls if u not in cached]
+    if use_browser:
+        # One cloud browser per page, all of them at once up to the plan's cap.
+        # The per-page latency is 10-20s and cannot be reduced, so the width is
+        # the whole strategy: 25 pages take about as long as the slowest one.
+        outcomes = await browserbase_client.fetch_pages(
+            target_urls, concurrency=settings.browserbase_page_concurrency
+        )
+    elif target_urls:
+        outcomes = await scrape_many(target_urls, oxylabs, concurrency=ENRICH_CONCURRENCY)
+    else:
+        outcomes = []
     by_url = {url: (html, error) for url, html, error in outcomes}
 
     rows: list[SupplierMatch] = []
@@ -588,13 +780,18 @@ async def _enrich(
     unparsed = 0
 
     for candidate in candidates:
-        if candidate.product_url not in by_url:
+        if candidate.product_url not in by_url and candidate.product_url not in cached:
             reason = (
-                f"Not enriched: {candidate.marketplace} has no Oxylabs enrichment step."
+                f"Not enriched: {candidate.marketplace} has no enrichment step."
                 if candidate.marketplace not in ENRICH_SITES
                 else f"Not enriched: past the {MAX_ENRICH}-page cap for one search."
             )
             rows.append(_from_lens_only(candidate, reason))
+            continue
+
+        hit = cached.get(candidate.product_url)
+        if hit is not None:
+            rows.append(_merged(candidate, hit))
             continue
 
         html, error = by_url[candidate.product_url]
@@ -616,6 +813,7 @@ async def _enrich(
                 )
             )
             continue
+        page_cache.put(candidate.product_url, parsed)
         rows.append(_merged(candidate, parsed))
 
     if auth_failed:
@@ -625,8 +823,9 @@ async def _enrich(
             "OXYLABS_USERNAME / OXYLABS_PASSWORD (the dashboard's API user, not the login)."
         )
     elif failures:
+        limit = "45s" if use_browser else f"{PER_URL_TIMEOUT:.0f}s"
         warnings.append(
-            f"{failures} product page(s) could not be read within {PER_URL_TIMEOUT:.0f}s; "
+            f"{failures} product page(s) could not be read within {limit}; "
             "those rows fall back to SerpApi's own title, price and thumbnail."
         )
     if unparsed:
@@ -760,11 +959,22 @@ async def find_suppliers(
     # Everything else — retail matches, and marketplace matches stuck behind a
     # Lens redirect — is context.
     marketplace = [c for c in candidates if c.marketplace in MARKETPLACES]
-    marketplace_hits = [c for c in marketplace if c.resolvable and _is_product_page(c)]
+    marketplace_hits = [
+        c
+        for c in marketplace
+        if c.resolvable and _is_product_page(c) and _is_listing_title(c.title)
+    ]
     unreachable = [c for c in marketplace if not c.resolvable]
     # Reachable, on a supplier site, and still not a listing — a Made-in-China
-    # category or keyword-search page. Context, never a supplier row.
-    non_product = [c for c in marketplace if c.resolvable and not _is_product_page(c)]
+    # category page, an Alibaba brand landing page, or anything whose Lens title
+    # is a login wall. Context, never a supplier row. Must stay the exact
+    # complement of marketplace_hits above, or a candidate is either counted
+    # twice or silently dropped from both.
+    non_product = [
+        c
+        for c in marketplace
+        if c.resolvable and (not _is_product_page(c) or not _is_listing_title(c.title))
+    ]
     others = [c for c in candidates if c.marketplace is None]
 
     if not candidates:
@@ -783,7 +993,7 @@ async def find_suppliers(
         # page parses into a supplier row with a plausible title and no factory
         # behind it.
         warnings.append(
-            f"{len(non_product)} Made-in-China match(es) were category, keyword-search or "
+            f"{len(non_product)} marketplace match(es) were category, keyword-search or "
             "video pages rather than product listings, so they were not enriched. They are "
             "in partial_matches with their Lens link."
         )
@@ -811,8 +1021,20 @@ async def find_suppliers(
     # included. Off unless requested: it is several page fetches and a vision
     # call per supplier, which is a different order of cost from the two steps
     # above and would quietly turn a 5-second endpoint into a 30-second one.
+    #
+    # Also off entirely in SerpApi-only mode, whatever the caller asked for: this
+    # step reads supplier sites through Oxylabs and judges their images with a
+    # vision call, so running it would make two more vendors part of a supplier
+    # search that is supposed to use one. It has nothing to work from either —
+    # it starts from the supplier identified in step 2, which SerpApi-only mode
+    # does not produce.
     contacts_ms: Optional[int] = None
-    if include_contacts and results:
+    if include_contacts and results and settings.supplier_search_serpapi_only:
+        warnings.append(
+            "Contact lookup was skipped: supplier search is set to SerpApi only, "
+            "and reading a supplier's own site needs Oxylabs."
+        )
+    elif include_contacts and results:
         contacts_started = time.perf_counter()
         warnings.extend(await supplier_contacts.enrich_matches(results, oxylabs))
         contacts_ms = int((time.perf_counter() - contacts_started) * 1000)

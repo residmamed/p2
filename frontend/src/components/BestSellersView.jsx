@@ -10,7 +10,7 @@ import ResultsToolbar, { applyResultFilters, DEFAULT_FILTERS } from "./ResultsTo
 import SavedSearches from "./SavedSearches";
 import LensBanner from "./LensBanner";
 import { exportProductsToExcel } from "../exportExcel";
-import { searchBestSellers, searchBestSellersByImage, findSuppliersByImage, findMoreFromStore, clearSupplierCache, PRODUCT_SEARCH_MS, LENS_SOURCING_MS, MFR_SEARCH_MS } from "../api";
+import { searchBestSellers, searchBestSellersByImage, findSuppliersByImage, findMoreFromStore, clearSupplierCache, DEEP_SEARCH_ENABLED, PRODUCT_SEARCH_MS, LENS_SOURCING_MS, MFR_SEARCH_MS } from "../api";
 import { PRODUCT_SEARCH_SITES, MANUFACTURER_SITES, SITE_LABELS, SITE_COLORS } from "../sites";
 import { useI18n } from "../i18n";
 import { useRecentSearches, RUN_SEARCH_EVENT } from "../store";
@@ -422,7 +422,12 @@ function CameraIcon() {
 // one takes minutes. Splitting the ring evenly would race it to near-full in the
 // first few seconds and then leave it apparently stuck for the rest of the run,
 // which is the opposite of what it's for.
-const FAST_SHARE = 0.25;
+//
+// With the deep pass switched off there is only one pass that does any work, so
+// it gets the whole ring — leaving it at 0.25 would park the ring at a quarter
+// full for the entire real search and then snap it to full, reporting the one
+// thing that took time as though it were a fraction of the job.
+const FAST_SHARE = DEEP_SEARCH_ENABLED ? 0.25 : 1;
 
 // How many products the background deep pass searches at once.
 //
@@ -438,6 +443,11 @@ const FAST_SHARE = 0.25;
 // and going over does not queue, the session create fails outright, which is
 // why this is deliberately short of the cap rather than at it. On a Free plan
 // (3 concurrent) this must be 1.
+//
+// Moot while DEEP_SEARCH_ENABLED is off: with no deep pass to run, the loop this
+// bounds is only re-reading answers the fast pass already cached, and holds no
+// browser at all. Kept sized correctly so that flipping that switch back needs
+// no second decision here.
 const PREFETCH_PARALLEL = 6;
 
 // How many times the background run comes back to a product whose search threw

@@ -12,6 +12,7 @@ const STRINGS = {
     navSearch: "Search",
     navTrending: "Trending",
     navBestSellers: "Product Search",
+    navWinning: "Winning Products",
 
     bestHeading: "Search products",
     bestSubtitle: "Find products across Amazon, Walmart, Temu, Pinterest, Costco and IKEA — then find their manufacturers.",
@@ -271,6 +272,7 @@ const STRINGS = {
     navSearch: "Axtarış",
     navTrending: "Trend",
     navBestSellers: "Məhsul axtarışı",
+    navWinning: "Qalib məhsullar",
 
     bestHeading: "Məhsul axtar",
     bestSubtitle: "Amazon, Walmart, Temu, Pinterest, Costco və IKEA üzrə məhsul tap — sonra istehsalçılarını tap.",

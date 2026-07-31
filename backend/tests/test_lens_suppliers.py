@@ -30,6 +30,21 @@ from app.oxylabs_client import (
 from app.parsing.marketplace_product import _money, parse_product_page
 
 
+@pytest.fixture(autouse=True)
+def enrichment_enabled(monkeypatch):
+    """Every test below exercises the Oxylabs enrichment step, so the step has to
+    be reachable for any of them to mean anything.
+
+    The app now ships with SUPPLIER_SEARCH_SERPAPI_ONLY on, which short-circuits
+    that step and returns Lens-only rows. Pinning it off here is not working
+    around the setting — it is saying that this file tests the enriched path
+    specifically. The SerpApi-only path has its own file
+    (test_serpapi_only_suppliers.py), including a test that this switch really
+    does still reach the code below.
+    """
+    monkeypatch.setattr(lens_suppliers.settings, "supplier_search_serpapi_only", False)
+
+
 def candidate(url: str, *, order: int = 0, confidence: str = "lens_visual_match", **kwargs):
     from app.oxylabs_client import site_for_url as which
 
@@ -318,7 +333,9 @@ async def test_taobao_is_returned_unenriched_rather_than_dropped():
     (row,) = rows
     assert row.source == "taobao"
     assert row.enriched is False
-    assert "no Oxylabs enrichment step" in row.enrichment_error
+    # Backend-agnostic wording: which vendor opens the page is configurable
+    # now, but Taobao has no enrichment step under any of them.
+    assert "no enrichment step" in row.enrichment_error
 
 
 @pytest.mark.asyncio
