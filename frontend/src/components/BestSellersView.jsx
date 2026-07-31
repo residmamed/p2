@@ -13,7 +13,7 @@ import { exportProductsToExcel } from "../exportExcel";
 import { searchBestSellers, searchBestSellersByImage, findSuppliersByImage, findMoreFromStore, clearSupplierCache, DEEP_SEARCH_ENABLED, PRODUCT_SEARCH_MS, LENS_SOURCING_MS, MFR_SEARCH_MS } from "../api";
 import { PRODUCT_SEARCH_SITES, MANUFACTURER_SITES, SITE_LABELS, SITE_COLORS } from "../sites";
 import { useI18n } from "../i18n";
-import { useRecentSearches, RUN_SEARCH_EVENT } from "../store";
+import { useRecentSearches, publishSearchResults, RUN_SEARCH_EVENT } from "../store";
 import { userWarnings } from "../warnings";
 import { splitSuppliers } from "../supplierFilter";
 
@@ -583,10 +583,14 @@ export default function BestSellersView() {
       setWarnings(data.warnings || []);
       if (mode === "lens") setLensMode(data.lensMode || "similar");
       found = data.results;
+      // Hand the rows to the shared store so Winning Products can rank them
+      // without issuing its own searches.
+      publishSearchResults(query, sites, data.results);
     } catch (err) {
       if (isAbortError(err)) return;
       setError(err.message || "Something went wrong");
       setProducts([]);
+      publishSearchResults(query, sites, []);
     } finally {
       setLoading(false);
     }

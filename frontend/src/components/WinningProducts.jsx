@@ -1,15 +1,21 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { searchBestSellers } from "../api";
+import React, { useEffect, useMemo, useState } from "react";
 import { buildBoard } from "../trendMetrics";
 import { parsePrice, formatUSD } from "../productMetrics";
 import { SITE_LABELS } from "../sites";
+import { useLastSearchResults } from "../store";
 
 /* ------------------------------------------------------------------
-   Winning products — a ranked board over real Product Search results.
+   Winning products — a ranked board over the CURRENT Product Search.
 
-   Nothing here is a fixture. On mount it picks a handful of category
-   seeds at random, runs them through the same /api/bestsellers the
-   Product Search tab uses, and ranks whatever comes back.
+   This view issues no requests. It reads the rows Product Search
+   already put on screen (see store.js) and ranks them, so opening the
+   tab is instant and costs nothing.
+
+   It used to run four of its own /api/bestsellers queries against a
+   pool of hardcoded seed keywords. That was wrong twice over: it spent
+   a metered store search every time the tab was opened, and it ranked
+   products the user had never asked about instead of the ones in front
+   of them.
 
    What the rows show is deliberately two things at once: the listing's
    real demand signals (rating, review count, store rank) and a MODELED
@@ -17,50 +23,6 @@ import { SITE_LABELS } from "../sites";
    history, so momentum and the velocity curve are estimates, and every
    place they appear says so rather than passing them off as measured.
 ------------------------------------------------------------------ */
-
-// The pool the board draws from. Each seed is one /api/bestsellers query, so
-// these are keywords a store can actually answer, not taxonomy nodes.
-const SEEDS = [
-  { category: "Home & Kitchen", query: "pour over coffee kettle" },
-  { category: "Home & Kitchen", query: "silicone bakeware set" },
-  { category: "Home & Kitchen", query: "cast iron grill press" },
-  { category: "Home & Kitchen", query: "glass storage containers" },
-  { category: "Beauty", query: "vitamin c face serum" },
-  { category: "Beauty", query: "heatless curling rod" },
-  { category: "Beauty", query: "lip sleeping mask" },
-  { category: "Pet Supplies", query: "slow feeder dog bowl" },
-  { category: "Pet Supplies", query: "cat water fountain" },
-  { category: "Baby", query: "silicone baby feeding set" },
-  { category: "Baby", query: "portable bottle warmer" },
-  { category: "Fitness", query: "adjustable dumbbell set" },
-  { category: "Fitness", query: "resistance band set" },
-  { category: "Outdoor", query: "insulated tumbler 40 oz" },
-  { category: "Outdoor", query: "collapsible wagon cart" },
-  { category: "Office", query: "standing desk converter" },
-  { category: "Office", query: "monitor light bar" },
-];
-
-// Three stores rather than all twelve: the board fans out over several queries
-// at once, and each extra store multiplies that fan-out.
-const BOARD_SITES = ["amazon", "walmart", "target"];
-
-// How many seeds one board is built from.
-const SEEDS_PER_BOARD = 4;
-
-// Boards already built this session, keyed by their seed keywords. Every seed
-// is a metered store search, and leaving the tab unmounts this component — so
-// without a cache, switching to Product Search and back would silently re-bill
-// the whole board. "↻ New keywords" picks a different key, so it still searches.
-const _boardCache = new Map();
-
-function pickSeeds(n) {
-  const pool = [...SEEDS];
-  const out = [];
-  while (out.length < n && pool.length) {
-    out.push(pool.splice(Math.floor(Math.random() * pool.length), 1)[0]);
-  }
-  return out;
-}
 
 /* Momentum sparkline — draws itself in on mount, staggered by rank.
    This is the one moment of motion on the page. It encodes data,
@@ -134,94 +96,41 @@ function priceLabel(p) {
 }
 
 export default function WinningProducts() {
-  const [seeds, setSeeds] = useState(() => pickSeeds(SEEDS_PER_BOARD));
-  const [all, setAll] = useState([]);
-  const [status, setStatus] = useState("loading"); // loading | ready | error
-  const [error, setError] = useState(null);
-  const [warnings, setWarnings] = useState([]);
-  const [latencyMs, setLatencyMs] = useState(null);
-  const [category, setCategory] = useState("All categories");
+  const { query, products } = useLastSearchResults();
+  const [category, setCategory] = useState("All stores");
   const [newOnly, setNewOnly] = useState(false);
   const [open, setOpen] = useState(null);
 
-  const reshuffle = useCallback(() => {
-    setCategory("All categories");
-    setSeeds(pickSeeds(SEEDS_PER_BOARD));
-  }, []);
+  // The whole board, derived. No request, no loading state, no cache — ranking
+  // is arithmetic over rows the browser already has, so it is finished before
+  // the tab has finished painting.
+  //
+  // Categories come from the store each listing came from, because that is a
+  // real field on the data. The seed keywords this used to seed itself with
+  // described the board's own queries, which no longer exist.
+  const all = useMemo(
+    () =>
+      buildBoard(
+        products.map((p) => ({ ...p, category: SITE_LABELS[p.site] || p.site || "Other" }))
+      ),
+    [products]
+  );
 
+  const categories = useMemo(() => [...new Set(all.map((p) => p.category))], [all]);
+
+  // A category that existed for the previous search may not exist for this one,
+  // which would leave the board filtered to nothing with no way back.
   useEffect(() => {
-    const controller = new AbortController();
-    const cacheKey = seeds.map((s) => s.query).join("|");
-
-    const cached = _boardCache.get(cacheKey);
-    if (cached) {
-      setAll(cached.rows);
-      setWarnings(cached.warnings);
-      setLatencyMs(cached.latencyMs);
-      setStatus(cached.rows.length ? "ready" : "error");
-      setError(cached.rows.length ? null : "No listings came back for these keywords.");
-      return () => controller.abort();
+    if (category !== "All stores" && !categories.includes(category)) {
+      setCategory("All stores");
     }
-
-    setStatus("loading");
-    setError(null);
-    setWarnings([]);
-    setAll([]);
-    const started = performance.now();
-
-    // Seeds run concurrently and stay independent: one keyword failing should
-    // cost that keyword's rows, not the whole board.
-    Promise.all(
-      seeds.map(async (seed) => {
-        try {
-          const data = await searchBestSellers(seed.query, {
-            sites: BOARD_SITES,
-            signal: controller.signal,
-          });
-          return {
-            results: (data.results ?? []).map((p) => ({
-              ...p,
-              category: seed.category,
-              seed: seed.query,
-            })),
-            warnings: data.warnings ?? [],
-          };
-        } catch (e) {
-          if (e.name === "AbortError") throw e;
-          return { results: [], warnings: [`[${seed.query}] ${e.message}`] };
-        }
-      })
-    )
-      .then((batches) => {
-        if (controller.signal.aborted) return;
-        const rows = buildBoard(batches.flatMap((b) => b.results));
-        const boardWarnings = batches.flatMap((b) => b.warnings);
-        const took = Math.round(performance.now() - started);
-        // Cached even when empty: a keyword set the stores had nothing for will
-        // have nothing for it on the way back either.
-        _boardCache.set(cacheKey, { rows, warnings: boardWarnings, latencyMs: took });
-        setAll(rows);
-        setWarnings(boardWarnings);
-        setLatencyMs(took);
-        setStatus(rows.length ? "ready" : "error");
-        if (!rows.length) setError("No listings came back for these keywords.");
-      })
-      .catch((e) => {
-        if (e.name === "AbortError" || controller.signal.aborted) return;
-        setError(e.message);
-        setStatus("error");
-      });
-
-    return () => controller.abort();
-  }, [seeds]);
-
-  const categories = useMemo(() => [...new Set(seeds.map((s) => s.category))], [seeds]);
+  }, [categories, category]);
 
   const rows = useMemo(
     () =>
       all.filter(
         (p) =>
-          (category === "All categories" || p.category === category) &&
+          (category === "All stores" || p.category === category) &&
           (!newOnly || p.trend.ageDays < 365)
       ),
     [all, category, newOnly]
@@ -341,27 +250,17 @@ export default function WinningProducts() {
       <header className="band">
         <div className="band-top">
           <div>
-            <div className="eyebrow">{seeds.map((s) => s.query).join(" · ")}</div>
+            <div className="eyebrow">{query ? `ranking “${query}”` : "no search yet"}</div>
             <h1 className="h1">Winning products</h1>
           </div>
           <div className="band-right">
             <div className="latency mono">
-              {status === "loading" ? (
-                "searching…"
-              ) : (
-                <>
-                  {rows.length} of {all.length} ·{" "}
-                  <b>{latencyMs != null ? `${(latencyMs / 1000).toFixed(1)} s` : "—"}</b>
-                </>
-              )}
+              {rows.length} of {all.length}
             </div>
-            <button className="chip" onClick={reshuffle} disabled={status === "loading"}>
-              ↻ New keywords
-            </button>
           </div>
         </div>
         <div className="controls">
-          {["All categories", ...categories].map((c) => (
+          {["All stores", ...categories].map((c) => (
             <button key={c} className="chip" aria-pressed={category === c} onClick={() => setCategory(c)}>
               {c}
             </button>
@@ -373,22 +272,17 @@ export default function WinningProducts() {
       </header>
 
       <main className="sheet">
-        {status === "loading" && (
-          <div className="lead">
-            {[0, 1, 2].map((i) => (
-              <div key={i} className="skeleton" />
-            ))}
-          </div>
-        )}
-
-        {status === "error" && (
+        {/* Nothing to rank is not an error here — it just means no search has
+            run yet. Say what to do rather than reporting a failure. */}
+        {all.length === 0 && (
           <div className="note">
-            <b>Nothing to rank.</b> {error}
-            {warnings.length > 0 && <div className="warn">{warnings.join(" ")}</div>}
+            <b>Nothing to rank yet.</b> Run a search on the Product Search tab and
+            this board will rank those results — instantly, with no further
+            searching.
           </div>
         )}
 
-        {status === "ready" && (
+        {all.length > 0 && (
           <>
             <div className="lead">
               {lead.map((p, i) => (
@@ -456,13 +350,13 @@ export default function WinningProducts() {
             </div>
 
             <div className="note" style={{ marginTop: 20 }}>
-              <b>How to read this.</b> Rating, review count and store rank are read off the live
-              listings on {BOARD_SITES.map((s) => SITE_LABELS[s] ?? s).join(", ")}. The columns
-              marked <span className="est">EST</span> — momentum and the velocity curve — are{" "}
+              <b>How to read this.</b> Rating, review count and store rank are read off the
+              listings your Product Search returned{query ? ` for “${query}”` : ""} — this board
+              ranks those rows and searches nothing itself. The columns marked{" "}
+              <span className="est">EST</span> — momentum and the velocity curve — are{" "}
               <b>modeled</b>: Product Search returns a listing's current state and no history, so
               there is no second observation to measure a trend against. They are estimates shaped
               by the real demand signals, stable per product, and not measurements.
-              {warnings.length > 0 && <div className="warn">{warnings.join(" ")}</div>}
             </div>
           </>
         )}
