@@ -9,6 +9,9 @@
 # longer, which is the wrong side of a CDN's proxy timeout. The frontend calls
 # api.paraphoria.com directly instead — see src/api.js.
 
+# This file lives at the repository root, not in frontend/, because that is
+# where Netlify looks for it — both when building from Git and when the CLI
+# deploys from the repo root. `base` is what points it at the frontend.
 [build]
   # `publish` resolves relative to `base`, so this is frontend/dist.
   base    = "frontend"
