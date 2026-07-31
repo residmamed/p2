@@ -31,21 +31,35 @@ increasingly blocked.
 
 ---
 
-## 0. Rotate the API keys first
+## 0. Rotate the API keys — this is already urgent, deploy or not
 
-`backend/.env` is committed to this repo, with live keys for Zyte, Apify,
-SerpApi, Oxylabs, Anthropic, OpenAI, Gemini, Rainforest, Browserbase, CapSolver
-and 2Captcha. While everything ran on your laptop that was untidy. Publishing
-makes it urgent — and if this repo ever gains a remote, those keys are exposed
-to anyone who can read it.
+**`github.com/residmamed/p2` is a public repository, and `backend/.env`,
+`backend/.env.bak` and `backend/.env.example` are all committed to `origin/main`
+(since `484e6ab`, "Track the full working copy, credentials included").**
 
-**`backend/.env.example` too.** Despite the name it is not a template: it holds
-a real Apify token and the real Oxylabs username and password. Rotate those with
-the rest, and don't treat the file as safe to share because of its extension.
+Every one of these is readable by anyone, right now:
 
-Rotate them in each vendor's dashboard, then put the new values in Fly's secret
-store (step 2). They never go in the image: `.dockerignore` excludes `.env` so
-it cannot be baked into a layer.
+| Vendor | Variable |
+|---|---|
+| Zyte | `ZYTE_API_KEY` |
+| Anthropic | `ANTHROPIC_API_KEY` |
+| OpenAI | `OPENAI_API_KEY` |
+| Google Gemini | `GEMINI_API_KEY` |
+| SerpApi | `SERPAPI_KEY` |
+| Oxylabs | `OXYLABS_USERNAME`, `OXYLABS_PASSWORD` |
+| Apify | `APIFY_TOKEN` |
+| Rainforest | `RAINFOREST_API_KEY` |
+| Browserbase | `BROWSERBASE_API_KEY`, `BROWSERBASE_PROJECT_ID` |
+| CapSolver | `CAPSOLVER_API_KEY` |
+| 2Captcha | `TWOCAPTCHA_API_KEY` |
+
+Rotating each key in its vendor dashboard is the only thing that actually fixes
+this. Deleting the files, or making the repo private, does not — the values
+remain in the git history and in any clone or fork already taken.
+
+Do this before step 1. Then put the new values in Fly's secret store (step 2);
+they never go into the image, because `.dockerignore` excludes `.env` so it
+cannot be baked into a layer.
 
 ## 1. Backend on Fly.io
 
