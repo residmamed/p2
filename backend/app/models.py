@@ -214,6 +214,15 @@ class SupplierMatch(BaseModel):
     # looks like it. Nothing in this pipeline compares the two products, so no
     # row here may claim more than "Lens put these together".
     match_confidence: str = "lens_visual_match"
+    # Buyer rating of the listing, 0-5, and the reviews behind it. Only ever
+    # populated from the product page, so absent on every unenriched row.
+    #
+    # Absent on most enriched rows too: measured 2026-07-30, Alibaba publishes
+    # `averageStar`/`totalReviewCount` while Made-in-China publishes no rating at
+    # all. None means "this site does not say", which the UI must render as N/A
+    # — a 0 would be a claim nobody made, and the grid sorts on this column.
+    rating: Optional[float] = None
+    review_count: Optional[int] = None
     # False => every field above came from SerpApi's inline data and the product
     # page was never opened. Shown rather than inferred, so a thin row reads as
     # "not enriched" instead of "this supplier publishes nothing".

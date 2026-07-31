@@ -224,11 +224,25 @@ class ParsedProduct:
     price_text: Optional[str] = None
     moq: Optional[str] = None
     image_url: Optional[str] = None
+    # Buyer rating of the listing, 0-5, and how many reviews are behind it.
+    #
+    # Alibaba-only in practice. Measured 2026-07-30 on live pages: Alibaba
+    # embeds `averageStar` and `totalReviewCount`, while Made-in-China product
+    # pages carry no rating in any form — no JSON-LD aggregateRating, no
+    # rating-shaped keys. So a None here means "this site does not publish one",
+    # which is why it must never be coerced to 0: the UI sorts on rating, and a
+    # fabricated zero would rank a perfectly good factory below every rated one.
+    rating: Optional[float] = None
+    review_count: Optional[int] = None
 
     def is_empty(self) -> bool:
         """True when the page yielded nothing usable — a challenge page, a 404
         served as 200, or a redesign this parser hasn't caught up with. The
         caller treats it exactly like a failed fetch."""
+        # rating/review_count deliberately excluded: a page that yielded only a
+        # star figure told us nothing about the product or who makes it, and
+        # treating that as a successful parse would put a bare rating on a row
+        # with no title, price or supplier.
         return not any(
             (self.title, self.supplier_name, self.price_min, self.moq, self.image_url)
         )
@@ -306,6 +320,21 @@ def _from_json_ld(node: dict) -> ParsedProduct:
         currency = offers.get("priceCurrency")
         if isinstance(currency, str) and currency.strip():
             parsed.currency = currency.strip().upper()
+
+    # The standard, site-agnostic place a rating lives. None of the current
+    # marketplaces populate it — checked live on both Alibaba and
+    # Made-in-China — but it costs nothing and is the first thing a site that
+    # starts publishing ratings would use.
+    rating = node.get("aggregateRating")
+    if isinstance(rating, dict):
+        value = _as_float(rating.get("ratingValue"))
+        # 0-5 or nothing. A site reporting on another scale (or a parse that
+        # picked up a price) must not become a star count.
+        if value is not None and 0 < value <= 5:
+            parsed.rating = value
+        count = _as_float(rating.get("reviewCount") or rating.get("ratingCount"))
+        if count is not None and count >= 0:
+            parsed.review_count = int(count)
     return parsed
 
 
@@ -374,6 +403,17 @@ ALIBABA_SUPPLIER_KEYS = ("companyName", "supplierName", "sellerCompanyName")
 ALIBABA_TITLE_KEYS = ("subject", "productTitle", "productSubject")
 ALIBABA_MOQ_KEYS = ("minOrderQuantity", "moq", "beginAmount", "minOrder")
 ALIBABA_UNIT_KEYS = ("productUnit", "unit", "saleUnit")
+# Buyer rating of the listing. Measured on a live Alibaba product page
+# 2026-07-30: `"averageStar":"3.7"` alongside `"totalReviewCount":99`. Both
+# spellings of the star key are accepted because the value appears twice on the
+# page, once quoted and once not, and the numeric reader handles either.
+#
+# Made-in-China has no equivalent — checked the same day, its pages carry no
+# JSON-LD aggregateRating and no rating-shaped key at all — so there is no
+# CN_RATING_KEYS counterpart to add. That is a fact about the site, not an
+# omission here.
+ALIBABA_RATING_KEYS = ("averageStar", "avgStar", "starLevel")
+ALIBABA_REVIEW_COUNT_KEYS = ("totalReviewCount", "reviewCount", "totalReviews")
 
 # 1688 ships a Chinese-language equivalent; Taobao's shop name lives under
 # `sellerNick` / `shopName`. Neither is confirmed against a live page.
@@ -613,7 +653,14 @@ def _moq_from_text(text: str) -> Optional[str]:
 # --- the merge --------------------------------------------------------------
 
 def _fill(target: ParsedProduct, source: ParsedProduct) -> None:
-    """First writer wins each field — layers are applied most-trusted first."""
+    """First writer wins each field — layers are applied most-trusted first.
+
+    NOTE: this list is the whole contract. A field added to ParsedProduct and
+    populated by a layer but not named here is silently discarded, and the
+    symptom is indistinguishable from the site not publishing it — which is how
+    `rating` first "proved" that Alibaba has no ratings, on pages that were
+    serving `averageStar` all along. Add the field here when you add it above.
+    """
     for field in ("title", "supplier_name", "supplier_url", "currency", "moq", "image_url", "price_text"):
         if getattr(target, field) is None and getattr(source, field) is not None:
             setattr(target, field, getattr(source, field))
@@ -622,6 +669,12 @@ def _fill(target: ParsedProduct, source: ParsedProduct) -> None:
         target.price_max = source.price_max
         if source.currency and target.currency is None:
             target.currency = source.currency
+    # Moved as a pair, like price. A review count belongs to the rating it was
+    # counted for, so taking one layer's stars and another's count would report
+    # a number of reviews that never backed that figure.
+    if target.rating is None and source.rating is not None:
+        target.rating = source.rating
+        target.review_count = source.review_count
 
 
 def parse_product_page(html: str, site: str) -> ParsedProduct:
@@ -697,6 +750,20 @@ def _parse(html: str, site: str) -> ParsedProduct:
         # Alibaba states MOQ as a bare integer with the unit alongside; a
         # fractional "minimum order" is a mis-keyed field, not a real quantity.
         blob.moq = f"{int(moq_count)} {unit}".strip() if moq_count == int(moq_count) else None
+    if is_alibaba:
+        # Bounded to 0-5 rather than trusted: these keys sit in a page-state blob
+        # next to prices and counts, and a loose regex that caught the wrong one
+        # would put a 99 or a 7.20 in the stars column. Out-of-range means "this
+        # wasn't the rating" and is dropped, not clamped.
+        star = _first_blob_number(html, ALIBABA_RATING_KEYS)
+        if star is not None and 0 < star <= 5:
+            blob.rating = round(star, 2)
+        reviews = _first_blob_number(html, ALIBABA_REVIEW_COUNT_KEYS)
+        # A review count with no rating behind it is not evidence of anything,
+        # and 0 reviews must stay absent rather than becoming "0 reviews" — the
+        # UI's review-weighted sort reads the two together.
+        if reviews is not None and reviews > 0 and blob.rating is not None:
+            blob.review_count = int(reviews)
     _fill(parsed, blob)
 
     # 4b. Made-in-China's company link. It ships no `companyProfileUrl` blob, so
