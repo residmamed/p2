@@ -355,13 +355,44 @@ function lensSupplierRow(match) {
     whatsapp: contacts?.whatsapp?.[0] ?? null,
     contact_name: contacts?.contact_name ?? null,
     contacts,
-    rating: null,
+    // Read off the product page during enrichment, so null on every unenriched
+    // row and on every site that publishes no rating — Made-in-China does not,
+    // Alibaba does. Left null rather than 0: the grid renders null as "N/A" and
+    // sorts on this column, so a zero would rank a factory nobody has rated
+    // below every genuinely bad one.
+    rating: match.rating ?? null,
+    review_count: match.review_count ?? null,
     business_type: null,
     years_active: null,
     contact_type: contacts?.emails?.length ? "direct" : "form",
     contact_value: contacts?.emails?.[0] ?? match.supplier_url ?? match.product_url,
   };
 }
+
+// Whether supplier search may fall through to the marketplaces' own
+// reverse-image indexes when Google Lens finds nothing.
+//
+// OFF: SerpApi Google Lens is the only thing that finds a supplier. Searches
+// finish in seconds instead of minutes, no cloud browser is driven and no Apify
+// actor runs, so the only metered vendors left on this path are SerpApi (the
+// search) and Oxylabs (reading the matched page for supplier name, price and
+// MOQ — Lens does not carry those).
+//
+// What that costs, stated plainly because it is not visible from the grid:
+//
+//   * **1688 becomes unreachable.** Measured over the 36 searches in the
+//     backend's 30-day Lens cache — 12,040 candidates by hostname: alibaba 89,
+//     made-in-china 19, taobao 1, **1688 zero**. It is Alibaba's domestic
+//     Chinese site and sits outside Google's index, so no photo will ever
+//     produce a 1688 row this way. Ticking it in the picker now yields nothing.
+//   * **Products Lens has never indexed return empty** rather than being
+//     searched a second way. For branded US retail this is common: a live
+//     search for Owala, HydroJug and Mainstays tumblers returned 409 matches
+//     and not one on Alibaba, 1688 or Taobao.
+//
+// Flip to true to restore the two-pass behaviour; nothing else has to change,
+// and the deep path's code is all still here and still tested.
+export const DEEP_SEARCH_ENABLED = false;
 
 // Sites the deep-search fallback can actually query. Taobao is a Lens-only
 // source — /api/sourcing/by-url rejects it — so it's dropped here rather than
@@ -467,6 +498,10 @@ export async function findSuppliersByImage(
 ) {
   const targets = products.filter((p) => p.image_url);
   const skipped = products.length - targets.length;
+  // The caller's request for a deep pass, and the app-wide switch that can veto
+  // it. Resolved once here rather than tested at each of the three places the
+  // deep pass is reached, so the two can never disagree in only some of them.
+  const useDeep = deepFallback && DEEP_SEARCH_ENABLED;
 
   // Live counters behind the progress bar. Products are searched concurrently
   // and land one at a time, so without this the whole run is a single unknown
@@ -561,7 +596,7 @@ export async function findSuppliersByImage(
   // pass returns, and announcing it twice would mean announcing it wrong once.
   const perProduct = new Map(settled.map((s) => [s.product, s.suppliers?.length ?? 0]));
   const stillWorking = new Set(
-    deepFallback && !signal?.aborted
+    useDeep && !signal?.aborted
       ? [...missed, ...uncovered.map((u) => u.product)]
       : []
   );
@@ -574,7 +609,7 @@ export async function findSuppliersByImage(
   // `signal` cannot cancel the requests themselves — they are cached and shared,
   // so no one caller owns them — but it does stop a search the user has already
   // abandoned from opening a fresh round of browser sessions here.
-  if (deepFallback && missed.length && !signal?.aborted) {
+  if (useDeep && missed.length && !signal?.aborted) {
     const sites = mfrSites.length
       ? DEEP_SEARCH_SITES.filter((s) => mfrSites.includes(s))
       : DEEP_SEARCH_SITES;
@@ -628,7 +663,7 @@ export async function findSuppliersByImage(
   // every site the user picked. Runs second so the products with nothing at all
   // are served first, and asks only for the missing sites — re-driving Alibaba
   // here would spend minutes re-finding rows Lens already returned in seconds.
-  if (deepFallback && uncovered.length && !signal?.aborted) {
+  if (useDeep && uncovered.length && !signal?.aborted) {
     // One call per distinct site set keeps the request cacheable by site list,
     // which is how _lookupDeep is keyed. In practice LENS_BLIND_SITES has one
     // entry, so this is one call.
@@ -680,6 +715,34 @@ export async function findSuppliersByImage(
             `against that site's own image index — ${added} listing(s) found.`
           : `Google Lens cannot see ${names}. Searching that site's own image index for ` +
             `${products.length} product(s) found no listing either.`
+      );
+    }
+  }
+
+  // With the deep pass off, nothing else is coming for these products, and an
+  // empty row in the grid is indistinguishable from a search that failed. Say
+  // which it was — the answer here is "Lens has never indexed a marketplace
+  // listing for this photo", which is a real finding about the product and not
+  // a fault in the search.
+  if (!DEEP_SEARCH_ENABLED && !deepFallback) {
+    // The caller did not want a deep pass either, so the switch changed nothing
+    // for it and there is nothing to explain.
+  } else if (!DEEP_SEARCH_ENABLED) {
+    if (missed.length) {
+      warnings.push(
+        `Google Lens found no marketplace listing for ${missed.length} product(s). ` +
+          `Supplier search is set to Google Lens only, so those were not searched ` +
+          `against the marketplaces' own image indexes.`
+      );
+    }
+    // Selecting a site Lens cannot see is not a miss, it is a guaranteed empty
+    // result, and the user is the only one who can act on it.
+    const blindSelected = mfrSites.filter((s) => LENS_BLIND_SITES.includes(s));
+    if (blindSelected.length) {
+      warnings.push(
+        `${blindSelected.join(", ")} cannot be reached by Google Lens and supplier ` +
+          `search is set to Google Lens only, so that source returns nothing. ` +
+          `Untick it, or re-enable the deep marketplace search.`
       );
     }
   }

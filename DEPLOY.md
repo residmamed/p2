@@ -171,8 +171,37 @@ expected — that is precisely what this step is for.
 Then publish:
 
 ```bash
-netlify deploy --build --prod
+netlify deploy --prod --no-build
 ```
+
+### `--no-build` is not optional here
+
+**In Netlify CLI v27, building is the default**, so a plain
+`netlify deploy --dir=dist` re-runs `npm run build` before uploading — with the
+CLI's own environment, not the shell's. A carefully built `dist` is silently
+overwritten and the *replacement* is what ships.
+
+That is exactly how a bundle pointing at `http://127.0.0.1:8000` reached
+production here twice. It fails in a way that looks like anything but a build
+problem: the site loads, the password screen renders, and only the API calls go
+nowhere.
+
+Two defences, both applied:
+
+1. `VITE_API_BASE` and `VITE_BASE_PATH` are set as **site environment
+   variables** in Netlify, so any build — CLI or Git — produces a correct
+   bundle even if the shell has nothing set.
+2. `--no-build` uploads exactly the directory you built.
+
+And verify the **live** bundle rather than the local one, because the local copy
+may have been rewritten under you:
+
+```bash
+curl -s https://p2.paraphoria.com/ | grep -o '/assets/index-[A-Za-z0-9_-]*\.js'
+```
+
+Fetch that file and confirm it contains `api.paraphoria.com` and no
+`127.0.0.1`.
 
 ## 3. Point p2.paraphoria.com at that site
 

@@ -22,6 +22,7 @@ the only one that produces a trusted event without a local file.
 """
 import asyncio
 import contextlib
+import threading
 from dataclasses import dataclass
 
 import httpx
@@ -169,6 +170,105 @@ async def wait_for_url(page: Page, matcher, timeout_ms: int = 30_000, poll_ms: i
         if matcher(page.url):
             return page.url
     return None
+
+
+# Process-wide ceiling on live cloud browsers.
+#
+# `fetch_pages` bounds one REQUEST, which is not the same thing and was not
+# enough: the frontend fires every product's supplier lookup at once, so a
+# 40-product grid becomes 40 simultaneous requests, each entitled to its own 25
+# browsers — about a thousand sessions asked for against a plan that allows 25.
+# Over the cap Browserbase fails the create outright rather than queueing, so
+# the visible symptom is most of the grid coming back empty, worst exactly when
+# the grid is biggest.
+#
+# Lazily built because a Semaphore binds to the running loop at construction.
+_session_limit: asyncio.Semaphore | None = None
+_session_limit_lock = threading.Lock()
+
+
+def _limiter() -> asyncio.Semaphore:
+    global _session_limit
+    if _session_limit is None:
+        with _session_limit_lock:
+            if _session_limit is None:
+                _session_limit = asyncio.Semaphore(settings.browserbase_page_concurrency)
+    return _session_limit
+
+
+# Everything a product page loads that we will never read. The parser works on
+# HTML — prices, ratings and the supplier blob are all text — so pictures,
+# fonts, stylesheets and video are pure latency on pages that carry dozens of
+# them. Measured below; this is the single biggest per-page saving available,
+# and unlike shortening the settle it cannot cost us a field.
+_BLOCKED_RESOURCES = {"image", "media", "font", "stylesheet"}
+
+
+async def _block_heavy_assets(page: Page) -> None:
+    async def route(route_obj):
+        if route_obj.request.resource_type in _BLOCKED_RESOURCES:
+            await route_obj.abort()
+        else:
+            await route_obj.continue_()
+
+    await page.route("**/*", route)
+
+
+async def fetch_page(url: str, timeout_ms: int = 45_000, settle_ms: int = 2500) -> str:
+    """One product page's rendered HTML, through one cloud browser.
+
+    `domcontentloaded` plus a fixed settle, rather than `networkidle`: these
+    marketplace pages hold long-poll and analytics connections open, so
+    networkidle waits for the timeout on a page that was readable in two
+    seconds. The settle is for the price and rating blocks, which arrive with
+    the page state rather than in the initial HTML.
+
+    Measured on live pages 2026-07-30: 9.7s, 12.8s and 23.3s. That is slow next
+    to the Oxylabs fetch this can replace, and it is the whole reason the caller
+    runs a lot of them at once.
+    """
+    async with _limiter():
+        async with remote_browser() as rb:
+            await _block_heavy_assets(rb.page)
+            await rb.page.goto(url, wait_until="domcontentloaded", timeout=timeout_ms)
+            await rb.page.wait_for_timeout(settle_ms)
+            return await rb.page.content()
+
+
+async def fetch_pages(urls: list[str], concurrency: int) -> list[tuple[str, str | None, str | None]]:
+    """Fetch many product pages at once. Returns (url, html, error) per url, in
+    the order given, and never raises — one dead page is one row that keeps its
+    Lens data, exactly like the Oxylabs path it parallels.
+
+    One session per page, not one session with many tabs. Tabs would be cheaper
+    (sessions are billed per second and each create costs seconds), but every
+    tab in a session shares its exit IP, and these are the sites this codebase
+    already has a bot-detection history with. A session per page means a proxy
+    IP per page, which is the difference the blocking risk turns on.
+
+    `concurrency` must stay under the Browserbase plan's cap — 3 on Free, 25 on
+    Developer. Over it, the session create fails outright rather than queueing,
+    so this is a real ceiling and not a tuning hint.
+    """
+    if not urls:
+        return []
+
+    async def one(url: str):
+        try:
+            return url, await fetch_page(url), None
+        except Exception as e:  # noqa: BLE001 — a page is never worth the request
+            return url, None, f"{type(e).__name__}: {e}"
+
+    results = await gather_limited([one(u) for u in urls], concurrency)
+    out: list[tuple[str, str | None, str | None]] = []
+    for url, result in zip(urls, results):
+        # gather_limited returns exceptions rather than raising them, and an
+        # exception escaping `one` means the failure was in the gather itself.
+        if isinstance(result, BaseException):
+            out.append((url, None, f"{type(result).__name__}: {result}"))
+        else:
+            out.append(result)
+    return out
 
 
 async def gather_limited(coros, limit: int):
