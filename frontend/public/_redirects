@@ -1,0 +1,8 @@
+# Single-page app fallback: unknown paths serve the entry point rather than a
+# 404, so a refresh or a deep link lands in the app.
+#
+# This lives in public/ (and so is copied into the publish directory) rather
+# than only in netlify.toml, because a `netlify deploy --dir=...` upload carries
+# the publish directory alone — the repo's netlify.toml is not consulted. Real
+# files are matched before this rule, so it never shadows an asset.
+/*  /index.html  200
