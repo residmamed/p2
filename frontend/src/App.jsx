@@ -4,6 +4,7 @@ import SearchView from "./components/SearchView";
 import TrendingView from "./components/TrendingView";
 import BestSellersView from "./components/BestSellersView";
 import CommandPalette from "./components/CommandPalette";
+import AccessGate from "./components/AccessGate";
 import { I18nProvider, LANGUAGES, useI18n } from "./i18n";
 import { useSavedSearches, useRecentSearches, RUN_SEARCH_EVENT } from "./store";
 
@@ -112,7 +113,9 @@ function AppShell() {
 export default function App() {
   return (
     <I18nProvider>
-      <AppShell />
+      <AccessGate>
+        <AppShell />
+      </AccessGate>
     </I18nProvider>
   );
 }

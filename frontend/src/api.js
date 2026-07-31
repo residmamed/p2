@@ -1,4 +1,45 @@
-const API_BASE = "http://127.0.0.1:8000";
+// Where the API lives. Every request below is built on this one constant.
+//
+// Local dev keeps the old hardcoded default, so running the two servers by hand
+// needs no configuration. The hosted build sets it to https://api.paraphoria.com
+// — the backend on its own subdomain, called directly rather than proxied
+// through Netlify.
+//
+// Directly, because these requests are slow: a one-site product search measures
+// ~19s and the sourcing pipelines run far longer, which is the wrong side of a
+// CDN's proxy timeout. Going straight to the backend removes that ceiling.
+// A *subdomain* rather than a separate host, because api.paraphoria.com and
+// p2.paraphoria.com are the same site to a browser: the session cookie stays
+// first-party, so it survives Safari's tracking protection and the end of
+// third-party cookies, which a cookie on fly.dev would not.
+const API_BASE = import.meta.env.VITE_API_BASE ?? "http://127.0.0.1:8000";
+
+// Cross-origin requests drop cookies unless asked to send them, and the session
+// is a cookie. Centralised here so a new endpoint cannot forget it and fail as
+// a confusing 401 rather than an obvious mistake.
+const apiFetch = (url, options = {}) =>
+  fetch(url, { credentials: "include", ...options });
+
+export async function authStatus() {
+  const response = await apiFetch(`${API_BASE}/api/auth/status`, { credentials: "include" });
+  return handleResponse(response);
+}
+
+export async function login(password) {
+  const response = await apiFetch(`${API_BASE}/api/auth/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+    body: JSON.stringify({ password }),
+  });
+  if (!response.ok) {
+    // The backend's own wording ("Incorrect password.") is better than anything
+    // generic we could substitute, so surface it rather than the status code.
+    const detail = await response.json().catch(() => null);
+    throw new Error(detail?.detail || `Sign-in failed (${response.status})`);
+  }
+  return response.json();
+}
 
 async function handleResponse(response) {
   if (!response.ok) {
@@ -11,7 +52,7 @@ async function handleResponse(response) {
 export async function searchByText(query, { page = 1, sites = [], signal } = {}) {
   const params = new URLSearchParams({ q: query, page: String(page) });
   if (sites.length) params.set("sites", sites.join(","));
-  const response = await fetch(`${API_BASE}/api/search/text?${params.toString()}`, { signal });
+  const response = await apiFetch(`${API_BASE}/api/search/text?${params.toString()}`, { signal });
   return handleResponse(response);
 }
 
@@ -40,7 +81,7 @@ export const LENS_SOURCING_MS = 20000;
 export async function searchBestSellers(query, { sites = [], signal } = {}) {
   const params = new URLSearchParams({ q: query });
   if (sites.length) params.set("sites", sites.join(","));
-  const response = await fetch(`${API_BASE}/api/bestsellers?${params.toString()}`, { signal });
+  const response = await apiFetch(`${API_BASE}/api/bestsellers?${params.toString()}`, { signal });
   return handleResponse(response);
 }
 
@@ -52,7 +93,7 @@ export async function searchBestSellers(query, { sites = [], signal } = {}) {
 // because "this store returns everything in one request" is worth knowing.
 export async function findMoreFromStore(query, site, have, { signal } = {}) {
   const params = new URLSearchParams({ q: query, site, have: String(have) });
-  const response = await fetch(`${API_BASE}/api/bestsellers/more?${params.toString()}`, { signal });
+  const response = await apiFetch(`${API_BASE}/api/bestsellers/more?${params.toString()}`, { signal });
   return handleResponse(response);
 }
 
@@ -151,7 +192,7 @@ function _lookupDeep(product, mfrSites) {
   // signal after awaiting.
   const entry = {
     settled: false,
-    promise: fetch(`${API_BASE}/api/sourcing/by-url?${params.toString()}`, { method: "POST" })
+    promise: apiFetch(`${API_BASE}/api/sourcing/by-url?${params.toString()}`, { method: "POST" })
       .then(handleResponse)
       .then((data) => {
         entry.settled = true;
@@ -386,7 +427,7 @@ function _lookupSuppliers(product, includeContacts) {
   // Deliberately not given the caller's `signal`: a cached lookup is shared, so
   // one caller aborting must not cancel a request another is waiting on. Callers
   // check their own signal after awaiting (see runSupplierSearch).
-  const promise = fetch(`${API_BASE}/api/find-suppliers`, {
+  const promise = apiFetch(`${API_BASE}/api/find-suppliers`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ image_url: product.image_url, include_contacts: includeContacts }),
@@ -657,7 +698,7 @@ export async function searchByImage(
   if (detectedItem) params.set("detected_item", detectedItem);
   if (inspirationImageUrl) params.set("inspiration_image_url", inspirationImageUrl);
   if (includeLens) params.set("include_lens", "true");
-  const response = await fetch(`${API_BASE}/api/search/image?${params.toString()}`, {
+  const response = await apiFetch(`${API_BASE}/api/search/image?${params.toString()}`, {
     method: "POST",
     body: formData,
     signal,
@@ -671,7 +712,7 @@ export async function searchGoogleLens(file, { detectedItem = null, inspirationI
   const params = new URLSearchParams();
   if (detectedItem) params.set("detected_item", detectedItem);
   if (inspirationImageUrl) params.set("inspiration_image_url", inspirationImageUrl);
-  const response = await fetch(`${API_BASE}/api/trending/search-lens?${params.toString()}`, {
+  const response = await apiFetch(`${API_BASE}/api/trending/search-lens?${params.toString()}`, {
     method: "POST",
     body: formData,
     signal,
@@ -757,7 +798,7 @@ export async function searchViaLensExtension(file, { signal } = {}) {
 
 export async function enrichWithZyte(items, { signal } = {}) {
   if (!items.length) return { results: [], warnings: [] };
-  const response = await fetch(`${API_BASE}/api/trending/enrich`, {
+  const response = await apiFetch(`${API_BASE}/api/trending/enrich`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -769,7 +810,7 @@ export async function enrichWithZyte(items, { signal } = {}) {
 }
 
 export async function searchPinterest(idea, n = 20) {
-  const response = await fetch(`${API_BASE}/api/trending/search`, {
+  const response = await apiFetch(`${API_BASE}/api/trending/search`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ idea, n }),
@@ -778,7 +819,7 @@ export async function searchPinterest(idea, n = 20) {
 }
 
 export async function detectItems(imageUrl) {
-  const response = await fetch(`${API_BASE}/api/trending/detect`, {
+  const response = await apiFetch(`${API_BASE}/api/trending/detect`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ image_url: imageUrl }),
@@ -789,7 +830,7 @@ export async function detectItems(imageUrl) {
 export async function detectItemsFromUpload(file) {
   const formData = new FormData();
   formData.append("file", file);
-  const response = await fetch(`${API_BASE}/api/trending/detect-upload`, {
+  const response = await apiFetch(`${API_BASE}/api/trending/detect-upload`, {
     method: "POST",
     body: formData,
   });
@@ -798,7 +839,7 @@ export async function detectItemsFromUpload(file) {
 
 export async function fetchInspirationImageAsFile(imageUrl) {
   const params = new URLSearchParams({ url: imageUrl });
-  const response = await fetch(`${API_BASE}/api/trending/fetch-image?${params.toString()}`);
+  const response = await apiFetch(`${API_BASE}/api/trending/fetch-image?${params.toString()}`);
   if (!response.ok) throw new Error(`Could not load image (${response.status})`);
   const blob = await response.blob();
   return new File([blob], "inspiration.jpg", { type: "image/jpeg" });
@@ -809,7 +850,7 @@ export function cropUrl(cropId) {
 }
 
 export async function fetchCropAsFile(cropId) {
-  const response = await fetch(cropUrl(cropId));
+  const response = await apiFetch(cropUrl(cropId));
   if (!response.ok) throw new Error(`Could not load crop (${response.status})`);
   const blob = await response.blob();
   return new File([blob], `${cropId}.jpg`, { type: "image/jpeg" });

@@ -1,0 +1,54 @@
+# Fly.io config for the p2 backend.
+#
+# `fly launch` will offer to generate this; it is committed instead so the
+# deployment is reproducible and the non-obvious choices below are written down.
+
+app = "p2-backend"
+primary_region = "fra"   # close to the user; change to your nearest region
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  PORT = "8080"
+  # Note: APP_PASSWORD, RATE_LIMIT_PER_HOUR and every vendor API key are set
+  # with `fly secrets set`, NOT here. This file is committed; secrets are not.
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+
+  # Scale to zero when idle. This app is used in bursts by a handful of people,
+  # so paying for an always-on machine buys nothing. The cost is a cold start on
+  # the first request after a quiet spell.
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 0
+
+  # One machine, deliberately. The rate limiter in app/gate.py counts in memory,
+  # so a second instance would silently double the effective ceiling. Raising
+  # this means moving that counter to shared storage first.
+  max_machines_running = 1
+
+  [http_service.concurrency]
+    type = "requests"
+    # Searches are I/O-bound (waiting on Zyte, SerpApi, Anthropic) rather than
+    # CPU-bound, so one machine can hold many in flight at once.
+    soft_limit = 20
+    hard_limit = 40
+
+[[http_service.checks]]
+  # /api/health is exempt from the password gate precisely so this works —
+  # otherwise Fly reads 401 as unhealthy and restarts the machine forever.
+  path = "/api/health"
+  interval = "30s"
+  timeout = "5s"
+  grace_period = "30s"
+  method = "GET"
+
+[[vm]]
+  # 2 GB, not the 256 MB default: torch plus the YOLO weights alone need more
+  # than the default machine has, and it OOM-kills on the first Trending detect.
+  memory = "2gb"
+  cpu_kind = "shared"
+  cpus = 2

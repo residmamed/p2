@@ -1,10 +1,12 @@
 import asyncio
+import os
 
-from fastapi import Body, FastAPI, File, HTTPException, Query, UploadFile
+from fastapi import Body, FastAPI, File, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-from . import bestsellers, claude_agent, credentials, lens_suppliers, sourcing
+from . import bestsellers, claude_agent, credentials, gate, lens_suppliers, sourcing
 from .config import settings
 from .google_lens import GoogleLensError, search_google_lens_products
 from .image_match import match_and_group
@@ -22,14 +24,72 @@ from .trending import router as trending_router
 
 app = FastAPI(title="Zyte Product Search")
 
+# Added first, so CORS ends up the *outer* layer and a 401 from the gate still
+# carries its headers — otherwise a browser reports the rejection as an opaque
+# CORS error and the real reason ("not signed in") never reaches the UI.
+app.middleware("http")(gate.middleware)
+
+# In the hosted setup Netlify proxies /p/2/api/* to this app, so the browser
+# only ever sees one origin and CORS never applies. These entries are for
+# running the frontend dev server against a backend elsewhere; ALLOWED_ORIGINS
+# (comma-separated) adds to them without a code change.
+_origins = ["http://localhost:5173", "http://127.0.0.1:5173"]
+_origins += [o.strip() for o in os.environ.get("ALLOWED_ORIGINS", "").split(",") if o.strip()]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_origins=_origins,
     allow_methods=["*"],
     allow_headers=["*"],
+    # The session is a cookie, so the browser must be allowed to send it.
+    allow_credentials=True,
 )
 
 app.include_router(trending_router)
+
+
+class LoginRequest(BaseModel):
+    password: str
+
+
+@app.get("/api/auth/status")
+def auth_status(request: Request) -> dict:
+    """Lets the UI decide between showing a login screen and going straight in,
+    without having to fire a real (money-spending) request to find out."""
+    return {
+        "gate_enabled": gate.enabled(),
+        "signed_in": not gate.enabled()
+        or gate._valid_cookie(request.cookies.get(gate.COOKIE_NAME)),
+    }
+
+
+@app.post("/api/auth/login")
+def auth_login(body: LoginRequest) -> JSONResponse:
+    gate.require_enabled()
+    if not gate.check_password(body.password):
+        # Deliberately vague, and no hint about length or format.
+        raise HTTPException(401, "Incorrect password.")
+    response = JSONResponse({"signed_in": True})
+    response.set_cookie(
+        gate.COOKIE_NAME,
+        gate.issue_cookie(),
+        max_age=gate.SESSION_TTL,
+        httponly=True,   # never readable from JS, so an XSS cannot lift it
+        secure=True,     # HTTPS only; paraphoria.com is TLS-only anyway
+        # "lax" is enough despite the API sitting on another origin: SameSite is
+        # judged per *site*, and api.paraphoria.com shares a site with the page.
+        samesite="lax",
+        domain=gate.cookie_domain(),
+        path="/",
+    )
+    return response
+
+
+@app.post("/api/auth/logout")
+def auth_logout() -> JSONResponse:
+    response = JSONResponse({"signed_in": False})
+    response.delete_cookie(gate.COOKIE_NAME, path="/", domain=gate.cookie_domain())
+    return response
 
 SCRAPERS = {
     "alibaba": AlibabaScraper(),

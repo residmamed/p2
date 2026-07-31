@@ -2443,3 +2443,80 @@ body {
   font-size: 0.76rem;
   color: var(--ink-soft);
 }
+
+/* --- access gate ---------------------------------------------------------
+   Shown only on the hosted deployment, in place of the whole app, until the
+   shared password is accepted. Built from the same variables as everything
+   else so it inherits light/dark without a second theme to maintain. */
+.gate {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: var(--bg);
+}
+
+.gate-card {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  width: 100%;
+  max-width: 320px;
+  padding: 32px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+}
+
+.gate-title {
+  margin: 0;
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.gate-note {
+  margin: 0;
+  font-size: 0.86rem;
+  color: var(--ink-soft);
+}
+
+.gate-input {
+  padding: 12px 14px;
+  font-size: 0.95rem;
+  color: var(--ink);
+  background: var(--surface-soft);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  outline: none;
+}
+
+.gate-input:focus {
+  border-color: var(--accent);
+}
+
+.gate-button {
+  padding: 12px 14px;
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--pill-active-fg);
+  background: var(--pill-active-bg);
+  border: none;
+  border-radius: 10px;
+  cursor: pointer;
+}
+
+.gate-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.gate-error {
+  margin: 0;
+  padding: 8px 10px;
+  font-size: 0.82rem;
+  color: var(--danger-fg);
+  background: var(--danger-bg);
+  border-radius: 8px;
+}
